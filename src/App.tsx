@@ -99,6 +99,7 @@ function App() {
 
       <CloudBar />
 
+      <div className="game-scroll">
       {achievementNotice && (
         <button className="achievement-toast" type="button" onClick={dismissAchievementNotice}>
           <span>🏆</span>
@@ -213,6 +214,8 @@ function App() {
         <AchievementScreen unlockedAchievements={unlockedAchievements} progress={{ totalClicks: useGameStore.getState().totalClicks, totalEnergyEarned: useGameStore.getState().totalEnergyEarned, eggsOpened: useGameStore.getState().eggsOpened, upgradesBought: useGameStore.getState().upgradesBought, ownedCreatures }} />
       )}
 
+      </div>
+
       <nav className="bottom-nav" aria-label="Игровая навигация">
         <button className={`nav-item ${screen === 'island' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('island')}>
           <span>◈</span> Остров
@@ -222,9 +225,6 @@ function App() {
         </button>
         <button className={`nav-item ${screen === 'creatures' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('creatures')}>
           <span>♧</span> Существа
-        </button>
-        <button className={`nav-item ${screen === 'creatures' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('creatures')}>
-          <span>▣</span> Коллекция
         </button>
         <button className={`nav-item ${screen === 'achievements' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('achievements')}>
           <span>🏆</span> Достижения

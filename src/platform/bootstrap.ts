@@ -7,6 +7,8 @@
 
 import { installAdsDebugHelper } from './ads'
 import { initAudio } from './audio'
+import { initMobileFullscreen } from './fullscreen'
+import { installPlatformGuards } from './platformGuards'
 import { initGameLifecycle } from './gameLifecycle'
 import { getSdkSession } from './yandexSdk'
 
@@ -16,7 +18,11 @@ export function bootstrapPlatform(): void {
   if (started) return
   started = true
 
+  // Запреты браузера: контекстное меню, лонгтап, жесты масштабирования (п. 1.6.1.8, 1.20).
+  installPlatformGuards()
   initGameLifecycle()
+  // Полноэкранный режим на мобильных включается первым касанием (п. 1.6.1.1).
+  initMobileFullscreen()
   // Звук: модуль сам останавливает звучание при паузе и рекламе (п. 1.3, 4.7).
   initAudio()
   // Рекламный модуль выключен по умолчанию; в dev доступны команды для проверки.

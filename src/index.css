@@ -1,139 +1,91 @@
+/*
+ * Базовые стили приложения.
+ *
+ * Здесь решаются две платформенные задачи:
+ *  1. Ресурсы не тянутся с внешних хостов: шрифты лежат в архиве игры
+ *     (требование 1.7 и правила CSP платформы).
+ *  2. Страница не прокручивается и не «дёргается» на мобильных: нет системного
+ *     скроллбара и swipe-to-refresh (п. 1.10.2), внутреннее поле игры не
+ *     выделяется и не вызывает контекстное меню по долгому нажатию
+ *     (п. 1.6.1.8, п. 1.6.2.7).
+ *
+ * Прокрутка контента реализована средствами игры — см. `.game-scroll` в App.css.
+ */
+
+/* DM Sans в игре используется для цифр и латиницы (кириллицы в шрифте нет). */
+@import '@fontsource/dm-sans/latin-400.css';
+@import '@fontsource/dm-sans/latin-500.css';
+@import '@fontsource/dm-sans/latin-700.css';
+/* Playfair Display — заголовки; подключаем кириллицу и латиницу. */
+@import '@fontsource/playfair-display/cyrillic-600.css';
+@import '@fontsource/playfair-display/cyrillic-700.css';
+@import '@fontsource/playfair-display/latin-600.css';
+@import '@fontsource/playfair-display/latin-700.css';
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  :root {
-    font-family: 'DM Sans', sans-serif;
-    color: #eef6df;
-    background: #061a25;
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  * {
-    box-sizing: border-box;
-  }
-
-  body {
-    min-width: 320px;
-    min-height: 100vh;
-    margin: 0;
-    overflow-x: hidden;
-    background:
-      radial-gradient(circle at 16% 10%, rgba(70, 130, 112, 0.22), transparent 28%),
-      radial-gradient(circle at 84% 82%, rgba(204, 171, 91, 0.1), transparent 25%),
-      #061a25;
-  }
-
-  button {
-    font-family: inherit;
-  }
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  font-family: 'DM Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  color: #eef6df;
+  background: #061a25;
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  /* Высоты интерфейса: используются в layout, чтобы сцена не вытесняла кнопки. */
+  --bottom-nav-height: 62px;
+  --shell-gap: 12px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
+html,
 body {
+  height: 100%;
   margin: 0;
+  /* Нет браузерной прокрутки и swipe-to-refresh (п. 1.10.2 требований). */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+body {
+  min-width: 320px;
+  color: #eef6df;
+  background:
+    radial-gradient(circle at 16% 10%, rgba(70, 130, 112, 0.22), transparent 28%),
+    radial-gradient(circle at 84% 82%, rgba(204, 171, 91, 0.1), transparent 25%),
+    #061a25;
+  /* Долгое нажатие по внутреннему полю игры не выделяет текст
+     и не открывает контекстное меню (п. 1.6.1.8, п. 1.6.2.7). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+#root {
+  height: 100%;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+button {
+  font-family: inherit;
+  color: inherit;
+  /* Убирает задержку двойного тапа на мобильных. */
+  touch-action: manipulation;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+canvas {
+  display: block;
+  /* Жесты по сцене отдаём Phaser: страница их не перехватывает. */
+  touch-action: none;
+}
+
+img {
+  max-width: 100%;
 }

@@ -47,11 +47,21 @@ export type YandexFullscreenApi = {
   status?: 'on' | 'off'
 }
 
+export type YandexDeviceInfo = {
+  /** Тип устройства: `desktop`, `mobile`, `tablet`, `tv`. */
+  type?: 'desktop' | 'mobile' | 'tablet' | 'tv'
+  isMobile?(): boolean
+  isDesktop?(): boolean
+  isTablet?(): boolean
+  isTV?(): boolean
+}
+
 export type YandexSdk = {
   environment?: {
     i18n?: { lang?: string; tld?: string }
     app?: { id?: string }
   }
+  deviceInfo?: YandexDeviceInfo
   features?: {
     LoadingAPI?: { ready(): void }
     GameplayAPI?: { start(): void; stop(): void }
