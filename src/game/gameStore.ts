@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { noteGameAction } from '../platform/ads'
 import { initCloudAutoSync, pushCloudSave, queueCloudSave, readCloudSave } from '../platform/cloudSave'
 import { getSdkSession, getSdkSessionSync, onSdkSessionChange, type SdkSession } from '../platform/yandexSdk'
 import { achievements, getAchievementProgress } from './achievements'
@@ -75,6 +76,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   cloudNotice: null,
   addEnergy: () =>
     set((state) => {
+      // Пейсинг рекламы: счётчик действий игрока (показ рекламы не запускает).
+      noteGameAction()
       const nextState = {
         energy: state.energy + state.clickPower,
         totalClicks: state.totalClicks + 1,
@@ -102,6 +105,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   buyClickUpgrade: () => {
     const state = get()
     if (state.energy < state.clickUpgradeCost) return false
+    noteGameAction()
 
     const nextState = {
       energy: state.energy - state.clickUpgradeCost,
@@ -118,6 +122,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   buySunwell: () => {
     const state = get()
     if (state.energy < state.sunwellCost) return false
+    noteGameAction()
 
     const nextState = {
       energy: state.energy - state.sunwellCost,
@@ -145,6 +150,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     })
     const hatched = creature ?? creatures[0]
     if (!hatched) return false
+    noteGameAction()
 
     const ownedCreatures = {
       ...state.ownedCreatures,

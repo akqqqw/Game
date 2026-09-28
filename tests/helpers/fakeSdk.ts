@@ -1,4 +1,4 @@
-import type { YandexPlayer, YandexSdk } from '../../src/platform/sdkTypes'
+import type { YandexAdCallbacks, YandexPlayer, YandexRewardedCallbacks, YandexSdk } from '../../src/platform/sdkTypes'
 
 export const CLOUD_KEY = 'evolution-isles-save'
 
@@ -19,6 +19,29 @@ type SdkOptions = {
   authorized?: boolean
   /** Начальное содержимое облака. */
   cloud?: Record<string, unknown>
+  /** Подключать ли рекламный модуль. */
+  withAds?: boolean
+}
+
+/**
+ * Управление рекламой в фейковом SDK: тест сам решает, как завершится показ,
+ * — так проверяются все ветки (закрытие, награда, ошибка, отсутствие контента).
+ */
+export type AdsRecorder = {
+  fullscreenCalls: number
+  rewardedCalls: number
+  /** Закрыть полноэкранную рекламу (`wasShown` — была ли она показана). */
+  closeFullscreen: (wasShown?: boolean) => void
+  /** Сообщить об ошибке полноэкранной рекламы. */
+  failFullscreen: () => void
+  /** Подтвердить показ вознаграждаемой рекламы. */
+  grantReward: () => void
+  /** Закрыть вознаграждаемую рекламу (награда — только если `grantReward` вызван). */
+  closeRewarded: () => void
+  /** Сообщить об ошибке вознаграждаемой рекламы. */
+  failRewarded: () => void
+  /** Есть ли активный показ, колбэки которого ещё не вызваны. */
+  pending: () => 'none' | 'fullscreen' | 'rewarded'
 }
 
 /**
@@ -26,13 +49,58 @@ type SdkOptions = {
  * используется вместо реального SDK в тестах.
  */
 export function installFakeSdk(options: SdkOptions = {}): CloudRecorder {
-  const { authorized = true, cloud = {} } = options
+  const { authorized = true, cloud = {}, withAds = true } = options
   let isAuthorized = authorized
   let writeFails = false
   let readFails = false
   let getPlayerCalls = 0
 
-  const recorder: CloudRecorder = {
+  let pendingAd: 'none' | 'fullscreen' | 'rewarded' = 'none'
+  let fullscreenCallbacks: YandexAdCallbacks | null = null
+  let rewardedCallbacks: YandexRewardedCallbacks | null = null
+
+  const adsRecorder: AdsRecorder = {
+    fullscreenCalls: 0,
+    rewardedCalls: 0,
+    closeFullscreen: (wasShown = true) => {
+      pendingAd = 'none'
+      fullscreenCallbacks?.onClose?.(wasShown)
+    },
+    failFullscreen: () => {
+      pendingAd = 'none'
+      fullscreenCallbacks?.onError?.({ code: 'mock' })
+    },
+    grantReward: () => {
+      rewardedCallbacks?.onRewarded?.()
+    },
+    closeRewarded: () => {
+      pendingAd = 'none'
+      rewardedCallbacks?.onClose?.(true)
+    },
+    failRewarded: () => {
+      pendingAd = 'none'
+      rewardedCallbacks?.onError?.({ code: 'mock' })
+    },
+    pending: () => pendingAd,
+  }
+
+  const ads = {
+    showFullscreenAdv({ callbacks }: { callbacks?: YandexAdCallbacks } = {}) {
+      adsRecorder.fullscreenCalls += 1
+      pendingAd = 'fullscreen'
+      fullscreenCallbacks = callbacks ?? null
+      callbacks?.onOpen?.()
+    },
+    showRewardedVideo({ callbacks }: { callbacks?: YandexRewardedCallbacks } = {}) {
+      adsRecorder.rewardedCalls += 1
+      pendingAd = 'rewarded'
+      rewardedCallbacks = callbacks ?? null
+      callbacks?.onOpen?.()
+    },
+  }
+
+  const recorder: CloudRecorder & { ads: AdsRecorder } = {
+    ads: adsRecorder,
     writes: [],
     cloud: { ...cloud },
     failWrites: (fail) => {
@@ -62,6 +130,7 @@ export function installFakeSdk(options: SdkOptions = {}): CloudRecorder {
   }
 
   const sdk: YandexSdk = {
+    ...(withAds ? { adv: ads } : {}),
     environment: { i18n: { lang: 'ru' } },
     features: {
       LoadingAPI: { ready: () => undefined },
