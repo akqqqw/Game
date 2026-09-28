@@ -1,6 +1,18 @@
+import { regularCreatures, secretCreatures } from './creatures'
 import type { GameProgress } from './gameProgress'
+import { MAX_HABITAT_LEVEL, habitatDefinitions } from './habitats'
 
-export type AchievementKind = 'clicks' | 'energy' | 'eggs' | 'upgrades' | 'collection'
+export type AchievementKind =
+  | 'clicks'
+  | 'energy'
+  | 'eggs'
+  | 'upgrades'
+  | 'collection'
+  | 'fusions'
+  | 'mutations'
+  | 'habitats'
+  | 'habitat_levels'
+  | 'secrets'
 
 export type AchievementDefinition = {
   id: string
@@ -11,6 +23,9 @@ export type AchievementDefinition = {
   rewardStars: number
   rewardEggs: number
 }
+
+/** Максимальный суммарный уровень жилищ — цель достижения «Владыка стихий». */
+const maxHabitatLevels = habitatDefinitions.length * MAX_HABITAT_LEVEL
 
 export const achievements: AchievementDefinition[] = [
   {
@@ -79,10 +94,73 @@ export const achievements: AchievementDefinition[] = [
   {
     id: 'full-collection',
     title: 'Хранитель острова',
-    description: 'Открыть все 10 видов существ.',
+    description: `Открыть все ${regularCreatures.length} видов существ, доступных в игре.`,
     kind: 'collection',
-    target: 10,
+    target: regularCreatures.length,
     rewardStars: 100,
+    rewardEggs: 3,
+  },
+  {
+    id: 'first-fusion',
+    title: 'Первое слияние',
+    description: 'Соединить двух существ в лаборатории.',
+    kind: 'fusions',
+    target: 1,
+    rewardStars: 20,
+    rewardEggs: 1,
+  },
+  {
+    id: 'fusion-adept',
+    title: 'Мастер слияний',
+    description: 'Провести 10 слияний.',
+    kind: 'fusions',
+    target: 10,
+    rewardStars: 45,
+    rewardEggs: 2,
+  },
+  {
+    id: 'first-mutation',
+    title: 'Счастливая случайность',
+    description: 'Получить мутировавшее существо.',
+    kind: 'mutations',
+    target: 1,
+    rewardStars: 30,
+    rewardEggs: 1,
+  },
+  {
+    id: 'habitat-builder',
+    title: 'Уютный остров',
+    description: 'Построить все четыре жилища.',
+    kind: 'habitats',
+    target: habitatDefinitions.length,
+    rewardStars: 40,
+    rewardEggs: 1,
+  },
+  {
+    id: 'habitat-master',
+    title: 'Владыка стихий',
+    description: 'Довести все жилища до максимального уровня.',
+    kind: 'habitat_levels',
+    target: maxHabitatLevels,
+    rewardStars: 90,
+    rewardEggs: 2,
+  },
+  {
+    id: 'first-secret',
+    title: 'Первая тайна',
+    description: 'Открыть секретное существо.',
+    kind: 'secrets',
+    target: 1,
+    rewardStars: 60,
+    rewardEggs: 2,
+  },
+  {
+    id: 'all-secrets',
+    title: 'Хранитель тайн',
+    description: `Разгадать все ${secretCreatures.length} секретных рецепта.`,
+    kind: 'secrets',
+    target: secretCreatures.length,
+    rewardStars: 150,
     rewardEggs: 3,
   },
 ]
@@ -101,6 +179,16 @@ export function getAchievementProgress(
     case 'upgrades':
       return progress.upgradesBought
     case 'collection':
-      return Object.values(progress.ownedCreatures).filter((level) => level > 0).length
+      return regularCreatures.filter((creature) => (progress.ownedCreatures[creature.id] ?? 0) > 0).length
+    case 'secrets':
+      return secretCreatures.filter((creature) => (progress.ownedCreatures[creature.id] ?? 0) > 0).length
+    case 'fusions':
+      return progress.fusionsDone
+    case 'mutations':
+      return progress.mutationsCount
+    case 'habitats':
+      return progress.builtHabitats
+    case 'habitat_levels':
+      return progress.habitatLevels
   }
 }

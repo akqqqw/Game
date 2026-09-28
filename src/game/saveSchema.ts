@@ -10,11 +10,13 @@
  */
 
 import { achievements } from './achievements'
+import { isKnownCreatureId } from './creatures'
 import type { DailyTask, DailyTaskKind } from './dailyTasks'
-import { creatures } from './creatures'
+import { fusionRecipes } from './fusion'
+import { createEmptyHabitats, sanitizeHabitats, type HabitatId, type HabitatState } from './habitats'
 
 /** Актуальная версия схемы сохранения. */
-export const SAVE_VERSION = 2
+export const SAVE_VERSION = 3
 
 /** Ключ, под которым сохранение лежит в облаке Яндекс Игр. */
 export const CLOUD_SAVE_KEY = 'evolution-isles-save'
@@ -32,6 +34,13 @@ export type PersistedGame = {
   sunwellCost: number
   eggCost: number
   ownedCreatures: Record<string, number>
+  /** Мутировавшие копии существ: id вида → количество. */
+  mutations: Record<string, number>
+  /** Жилища: уровень и жильцы каждого. */
+  habitats: Record<HabitatId, HabitatState>
+  /** Открытые рецепты слияний (id существа-результата). */
+  discoveredRecipes: string[]
+  fusionsDone: number
   lastHatchedId: string | null
   stars: number
   eggInventory: number
@@ -46,7 +55,7 @@ export type PersistedGame = {
 }
 
 /** Значения по умолчанию — используются и для новой игры, и для заполнения дыр. */
-const baseDefaults: Omit<PersistedGame, 'savedAt' | 'version'> = {
+const baseDefaults: Omit<PersistedGame, 'savedAt' | 'version' | 'habitats'> = {
   energy: 0,
   clickPower: 1,
   energyPerSecond: 0,
@@ -55,6 +64,9 @@ const baseDefaults: Omit<PersistedGame, 'savedAt' | 'version'> = {
   sunwellCost: 75,
   eggCost: 100,
   ownedCreatures: {},
+  mutations: {},
+  discoveredRecipes: [],
+  fusionsDone: 0,
   lastHatchedId: null,
   stars: 0,
   eggInventory: 0,
@@ -67,9 +79,15 @@ const baseDefaults: Omit<PersistedGame, 'savedAt' | 'version'> = {
   dailyTaskDate: '',
 }
 
-const dailyTaskKinds: DailyTaskKind[] = ['earn_energy', 'open_eggs', 'buy_upgrades']
-const knownCreatureIds = new Set(creatures.map((creature) => creature.id))
+const dailyTaskKinds: DailyTaskKind[] = [
+  'earn_energy',
+  'open_eggs',
+  'buy_upgrades',
+  'fuse',
+  'build_habitats',
+]
 const knownAchievementIds = new Set(achievements.map((achievement) => achievement.id))
+const knownRecipeIds = new Set(fusionRecipes.map((recipe) => recipe.id))
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -100,9 +118,35 @@ function sanitizeOwnedCreatures(value: unknown): Record<string, number> {
   if (!isRecord(value)) return {}
   const result: Record<string, number> = {}
   for (const [id, rawLevel] of Object.entries(value)) {
-    if (!knownCreatureIds.has(id)) continue
+    if (!isKnownCreatureId(id)) continue
     const level = toInt(rawLevel, 0)
     if (level > 0) result[id] = level
+  }
+  return result
+}
+
+/**
+ * Мутации не могут превышать число копий вида: мутировавшая копия — это та же
+ * особь, просто усиленная, поэтому её всегда «не больше», чем самих существ.
+ */
+function sanitizeMutations(value: unknown, ownedCreatures: Record<string, number>): Record<string, number> {
+  if (!isRecord(value)) return {}
+  const result: Record<string, number> = {}
+  for (const [id, rawCount] of Object.entries(value)) {
+    if (!isKnownCreatureId(id)) continue
+    const owned = ownedCreatures[id] ?? 0
+    const count = Math.min(toInt(rawCount, 0), owned)
+    if (count > 0) result[id] = count
+  }
+  return result
+}
+
+function sanitizeRecipes(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const result: string[] = []
+  for (const id of value) {
+    if (typeof id !== 'string' || !knownRecipeIds.has(id) || result.includes(id)) continue
+    result.push(id)
   }
   return result
 }
@@ -142,7 +186,7 @@ function sanitizeDailyTasks(value: unknown): DailyTask[] {
 }
 
 function sanitizeLastHatched(value: unknown): string | null {
-  return typeof value === 'string' && knownCreatureIds.has(value) ? value : null
+  return typeof value === 'string' && isKnownCreatureId(value) ? value : null
 }
 
 /** Похож ли объект на сохранение игры (защита от посторонних данных в облаке). */
@@ -170,9 +214,14 @@ const migrations: Record<number, SaveMigration> = {
     // До версии 2 пассивный доход мог быть не проставлен явно.
     energyPerSecond: typeof raw.energyPerSecond === 'number' ? raw.energyPerSecond : 1,
   }),
+  // Версия 3 добавила слияния, мутации и жилища. Старый прогресс не теряется:
+  // новые поля заполняются значениями по умолчанию в `buildSave`.
+  2: (raw) => ({ ...raw, version: 3 }),
 }
 
 function buildSave(raw: Record<string, unknown>): PersistedGame {
+  const ownedCreatures = sanitizeOwnedCreatures(raw.ownedCreatures)
+
   return {
     version: SAVE_VERSION,
     energy: toNumber(raw.energy, baseDefaults.energy),
@@ -182,7 +231,11 @@ function buildSave(raw: Record<string, unknown>): PersistedGame {
     sunwellLevel: toInt(raw.sunwellLevel, baseDefaults.sunwellLevel),
     sunwellCost: Math.max(1, toNumber(raw.sunwellCost, baseDefaults.sunwellCost)),
     eggCost: Math.max(1, toNumber(raw.eggCost, baseDefaults.eggCost)),
-    ownedCreatures: sanitizeOwnedCreatures(raw.ownedCreatures),
+    ownedCreatures,
+    mutations: sanitizeMutations(raw.mutations, ownedCreatures),
+    habitats: sanitizeHabitats(raw.habitats, ownedCreatures),
+    discoveredRecipes: sanitizeRecipes(raw.discoveredRecipes),
+    fusionsDone: toInt(raw.fusionsDone, baseDefaults.fusionsDone),
     lastHatchedId: sanitizeLastHatched(raw.lastHatchedId),
     stars: toInt(raw.stars, baseDefaults.stars),
     eggInventory: toInt(raw.eggInventory, baseDefaults.eggInventory),
@@ -222,11 +275,15 @@ export function normalizeSave(raw: unknown): PersistedGame | null {
 
 /** Новая игра: сохранение с нулевым прогрессом. */
 export function createNewSave(savedAt = 0): PersistedGame {
-  return { ...baseDefaults, version: SAVE_VERSION, savedAt }
+  return { ...baseDefaults, habitats: createEmptyHabitats(), version: SAVE_VERSION, savedAt }
 }
 
 /** Пустой ли прогресс: нужно, чтобы не перезатирать достижения пустым облаком. */
 export function isEmptyProgress(save: PersistedGame): boolean {
+  const hasHabitat = Object.values(save.habitats).some(
+    (habitat) => habitat.level > 0 || habitat.residents.length > 0,
+  )
+
   return save.energy <= 0
     && save.totalClicks === 0
     && save.totalEnergyEarned === 0
@@ -234,7 +291,11 @@ export function isEmptyProgress(save: PersistedGame): boolean {
     && save.upgradesBought === 0
     && save.stars === 0
     && save.eggInventory === 0
+    && save.fusionsDone === 0
     && Object.keys(save.ownedCreatures).length === 0
+    && Object.keys(save.mutations).length === 0
+    && save.discoveredRecipes.length === 0
+    && !hasHabitat
 }
 
 /**
@@ -243,6 +304,12 @@ export function isEmptyProgress(save: PersistedGame): boolean {
  */
 export function progressScore(save: PersistedGame): number {
   const collectionValue = Object.values(save.ownedCreatures).reduce((total, level) => total + level, 0)
+  const mutationValue = Object.values(save.mutations).reduce((total, level) => total + level, 0)
+  const habitatValue = Object.values(save.habitats).reduce(
+    (total, habitat) => total + habitat.level * 2000,
+    0,
+  )
+
   return save.totalEnergyEarned
     + save.energy
     + save.upgradesBought * 250
@@ -250,4 +317,8 @@ export function progressScore(save: PersistedGame): number {
     + collectionValue * 750
     + save.stars * 100
     + save.totalClicks
+    + save.fusionsDone * 1000
+    + mutationValue * 1500
+    + save.discoveredRecipes.length * 900
+    + habitatValue
 }

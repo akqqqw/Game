@@ -1,4 +1,9 @@
-export type DailyTaskKind = 'earn_energy' | 'open_eggs' | 'buy_upgrades'
+export type DailyTaskKind =
+  | 'earn_energy'
+  | 'open_eggs'
+  | 'buy_upgrades'
+  | 'fuse'
+  | 'build_habitats'
 
 export type DailyTask = {
   id: string
@@ -18,6 +23,9 @@ type TaskTemplate = {
   rewardStars: number
   rewardEggs: number
 }
+
+/** Сколько заданий выдаётся на день. */
+const tasksPerDay = 3
 
 const taskTemplates: TaskTemplate[] = [
   {
@@ -41,10 +49,30 @@ const taskTemplates: TaskTemplate[] = [
     rewardStars: 15,
     rewardEggs: 0,
   },
+  {
+    kind: 'fuse',
+    title: 'Провести слияний',
+    targets: [1, 2, 3],
+    rewardStars: 22,
+    rewardEggs: 1,
+  },
+  {
+    kind: 'build_habitats',
+    title: 'Улучшить жилища',
+    targets: [1, 2, 3],
+    rewardStars: 16,
+    rewardEggs: 0,
+  },
 ]
 
+/**
+ * Задания дня: набор собирается случайно из шаблонов, поэтому дни не
+ * повторяются один в один (раньше брались первые три шаблона подряд).
+ */
 export function createDailyTasks(date: string): DailyTask[] {
-  return taskTemplates.map((template) => ({
+  const shuffled = [...taskTemplates].sort(() => Math.random() - 0.5)
+
+  return shuffled.slice(0, tasksPerDay).map((template) => ({
     id: `${date}-${template.kind}`,
     kind: template.kind,
     title: template.title,
@@ -53,7 +81,7 @@ export function createDailyTasks(date: string): DailyTask[] {
     rewardStars: template.rewardStars,
     rewardEggs: template.rewardEggs,
     claimed: false,
-  })).slice(0, 3)
+  }))
 }
 
 export function getTodayKey(): string {
