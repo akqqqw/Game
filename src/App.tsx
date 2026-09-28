@@ -4,13 +4,18 @@ import { PhaserGame } from './game/PhaserGame'
 import { creatures, getCreature, rarityLabel, type Rarity } from './game/creatures'
 import type { DailyTask } from './game/dailyTasks'
 import { useEnergy, useGameStore } from './game/gameStore'
+import { startPassiveIncome, stopPassiveIncome } from './game/passiveIncome'
+import { unlockAudio } from './platform/audio'
+import { notifyGameReady } from './platform/yandexSdk'
+import { CloudBar } from './ui/CloudBar'
+import { LoadingScreen } from './ui/LoadingScreen'
 import './App.css'
 
 function App() {
   const [screen, setScreen] = useState<'island' | 'upgrades' | 'creatures' | 'achievements'>('island')
   const energy = useEnergy()
   const addEnergy = useGameStore((state) => state.addEnergy)
-  const addPassiveEnergy = useGameStore((state) => state.addPassiveEnergy)
+
   const buyClickUpgrade = useGameStore((state) => state.buyClickUpgrade)
   const clickPower = useGameStore((state) => state.clickPower)
   const clickUpgradeCost = useGameStore((state) => state.clickUpgradeCost)
@@ -33,8 +38,15 @@ function App() {
   const hydrated = useGameStore((state) => state.hydrated)
   const hydrate = useGameStore((state) => state.hydrate)
   const hydrateStarted = useRef(false)
-  const handleTreeClick = useCallback(() => addEnergy(), [addEnergy])
+  const [sceneReady, setSceneReady] = useState(false)
+  const handleTreeClick = useCallback(() => {
+    // Первое касание разблокирует звук: браузеры запрещают автозапуск аудио.
+    void unlockAudio()
+    addEnergy()
+  }, [addEnergy])
+  const handleSceneReady = useCallback(() => setSceneReady(true), [])
   const lastHatched = lastHatchedId ? getCreature(lastHatchedId) : undefined
+  const gameReady = hydrated && sceneReady
 
   useEffect(() => {
     if (hydrateStarted.current) return
@@ -42,14 +54,28 @@ function App() {
     void hydrate()
   }, [hydrate])
 
+  // Game Ready: сообщаем платформе, что игра готова, но только после того,
+  // как экран загрузки снят и первый кадр игры отрисован (п. 1.19.2).
+  useEffect(() => {
+    if (!gameReady) return
+    const frame = window.requestAnimationFrame(() => {
+      void notifyGameReady()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [gameReady])
+
+  // Пассивный доход начисляется по фактически прошедшему времени: при паузе
+  // таймер останавливается, при возобновлении пропущенное время начисляется
+  // один раз (см. `src/game/passiveIncome.ts`).
   useEffect(() => {
     if (!hydrated) return
-    const incomeTimer = window.setInterval(addPassiveEnergy, 1000)
-    return () => window.clearInterval(incomeTimer)
-  }, [addPassiveEnergy, hydrated])
+    startPassiveIncome()
+    return () => stopPassiveIncome()
+  }, [hydrated])
 
   return (
     <main className="game-shell">
+      {!gameReady && <LoadingScreen status={hydrated ? 'Готовим остров…' : 'Загружаем сохранение…'} />}
       <header className="topbar">
         <div className="brand-mark">
           <span className="brand-orb">✦</span>
@@ -71,6 +97,8 @@ function App() {
         </div>
       </header>
 
+      <CloudBar />
+
       {achievementNotice && (
         <button className="achievement-toast" type="button" onClick={dismissAchievementNotice}>
           <span>🏆</span>
@@ -88,7 +116,7 @@ function App() {
               <span className="caption-rule" />
               <span className="click-hint">Нажми, чтобы собрать</span>
             </div>
-            <PhaserGame onTreeClick={handleTreeClick} />
+            <PhaserGame onTreeClick={handleTreeClick} onReady={handleSceneReady} />
           </section>
 
           <section className="upgrade-panel" aria-label="Улучшения">

@@ -1,0 +1,97 @@
+/* Экран загрузки: та же палитра, что и у игрового интерфейса. */
+
+.loading-screen {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #eef6df;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(70, 130, 112, 0.28), transparent 45%),
+    #061a25;
+  animation: loading-fade-in 240ms ease-out;
+}
+
+.loading-orb {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 4px;
+  font-size: 28px;
+  color: #0b3038;
+  background: radial-gradient(circle at 34% 30%, #f4e6a8, #e8cb73 62%, #c9a854);
+  border-radius: 50%;
+  box-shadow: 0 0 0 6px rgba(232, 203, 115, 0.14), 0 14px 30px rgba(0, 0, 0, 0.35);
+  animation: loading-pulse 1.8s ease-in-out infinite;
+}
+
+.loading-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(20px, 4vw, 26px);
+  letter-spacing: 0.5px;
+}
+
+.loading-status {
+  color: #9fc4b5;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
+
+.loading-bar {
+  width: min(220px, 60vw);
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+  background: rgba(183, 231, 180, 0.14);
+  border-radius: 999px;
+}
+
+.loading-bar i {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, #55bc9a, #e8cb73);
+  border-radius: inherit;
+  animation: loading-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes loading-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes loading-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-orb,
+  .loading-bar i {
+    animation: none;
+  }
+}

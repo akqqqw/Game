@@ -1,19 +1,27 @@
 import { useEffect, useRef } from 'react'
 import Phaser from 'phaser'
+import { onGamePause, onGameResume } from '../platform/gameLifecycle'
 import { useGameStore } from './gameStore'
+
+/** Ключ сцены острова: нужен для управления паузой. */
+const SCENE_KEY = 'IslandScene'
 
 type PhaserGameProps = {
   onTreeClick: () => void
+  /** Вызывается после первого кадра сцены — момент, когда игра готова к игре. */
+  onReady?: () => void
 }
 
 class IslandScene extends Phaser.Scene {
   private readonly onTreeClick: () => void
+  private readonly onReady?: () => void
   private tree!: Phaser.GameObjects.Container
   private clickPulse = 0
 
-  constructor(onTreeClick: () => void) {
-    super('IslandScene')
+  constructor(onTreeClick: () => void, onReady?: () => void) {
+    super(SCENE_KEY)
     this.onTreeClick = onTreeClick
+    this.onReady = onReady
   }
 
   create() {
@@ -41,6 +49,12 @@ class IslandScene extends Phaser.Scene {
     }).setOrigin(0.5).setAlpha(0.78)
 
     this.createTree(centerX, centerY - 42)
+
+    // Сообщаем о готовности после отрисовки первого кадра сцены.
+    const notifyReady = this.onReady
+    if (notifyReady) {
+      this.events.once(Phaser.Scenes.Events.POST_UPDATE, () => notifyReady())
+    }
   }
 
   private createTree(x: number, y: number) {
@@ -95,14 +109,23 @@ class IslandScene extends Phaser.Scene {
   }
 }
 
-export function PhaserGame({ onTreeClick }: PhaserGameProps) {
+export function PhaserGame({ onTreeClick, onReady }: PhaserGameProps) {
   const gameParent = useRef<HTMLDivElement>(null)
   const game = useRef<Phaser.Game | null>(null)
 
+  /**
+   * Пауза сцены.
+   *
+   * Phaser сам останавливает цикл при сворачивании вкладки и потере фокуса
+   * (`VisibilityHandler` + сброс дельты в `TimeStep`), поэтому эти случаи игровой
+   * код обрабатывать не должен. А вот пауза по инициативе платформы (реклама,
+   * окно покупки) окно не скрывает — там сцену нужно останавливать явно, иначе
+   * твины и ввод продолжают работать под рекламным блоком.
+   */
   useEffect(() => {
     if (!gameParent.current) return
 
-    game.current = new Phaser.Game({
+    const phaserGame = new Phaser.Game({
       type: Phaser.AUTO,
       parent: gameParent.current,
       width: 760,
@@ -115,14 +138,26 @@ export function PhaserGame({ onTreeClick }: PhaserGameProps) {
         width: 760,
         height: 560,
       },
-      scene: new IslandScene(onTreeClick),
+      scene: new IslandScene(onTreeClick, onReady),
+    })
+    game.current = phaserGame
+
+    const unsubscribePause = onGamePause(() => {
+      if (phaserGame.scene.isPaused(SCENE_KEY)) return
+      phaserGame.scene.pause(SCENE_KEY)
+    })
+    const unsubscribeResume = onGameResume(() => {
+      if (!phaserGame.scene.isPaused(SCENE_KEY)) return
+      phaserGame.scene.resume(SCENE_KEY)
     })
 
     return () => {
-      game.current?.destroy(true)
+      unsubscribePause()
+      unsubscribeResume()
+      phaserGame.destroy(true)
       game.current = null
     }
-  }, [onTreeClick])
+  }, [onTreeClick, onReady])
 
   return <div ref={gameParent} className="phaser-mount" aria-label="Интерактивная сцена острова" />
 }

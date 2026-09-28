@@ -1,9 +1,13 @@
 import { create } from 'zustand'
+import { initCloudAutoSync, pushCloudSave, queueCloudSave, readCloudSave } from '../platform/cloudSave'
+import { getSdkSession, getSdkSessionSync, onSdkSessionChange, type SdkSession } from '../platform/yandexSdk'
 import { achievements, getAchievementProgress } from './achievements'
 import { creatures } from './creatures'
 import { advanceDailyTasks, createDailyTasks, getTodayKey, type DailyTask } from './dailyTasks'
 import type { GameProgress } from './gameProgress'
-import { loadGame, saveGame, type PersistedGame } from './saveGame'
+import { loadGame, saveBackupSave, saveGame } from './saveGame'
+import { resolveSaveConflict } from './saveMerge'
+import { SAVE_VERSION, type PersistedGame } from './saveSchema'
 
 type GameState = {
   energy: number
@@ -27,14 +31,23 @@ type GameState = {
   achievementNotice: string | null
   offlineEnergy: number
   hydrated: boolean
+  /** Уведомление о работе с облачным сохранением. */
+  cloudNotice: string | null
   addEnergy: () => void
-  addPassiveEnergy: () => void
+  /**
+   * Начисляет пассивный доход за `seconds` прошедшего времени.
+   * Вызывается только из `passiveIncome` — там же ограничение по времени.
+   */
+  accruePassiveEnergy: (seconds: number) => void
   buyClickUpgrade: () => boolean
   buySunwell: () => boolean
   openEgg: () => boolean
   claimTask: (taskId: string) => boolean
   dismissAchievementNotice: () => void
+  dismissCloudNotice: () => void
   hydrate: () => Promise<void>
+  /** Перечитать облако после авторизации игрока. */
+  syncCloudAfterAuthorization: () => Promise<void>
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -59,6 +72,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   achievementNotice: null,
   offlineEnergy: 0,
   hydrated: false,
+  cloudNotice: null,
   addEnergy: () =>
     set((state) => {
       const nextState = {
@@ -71,12 +85,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       void persistState({ ...state, ...finalState })
       return finalState
     }),
-  addPassiveEnergy: () =>
+  accruePassiveEnergy: (seconds) =>
     set((state) => {
+      const gained = state.energyPerSecond * seconds
+      if (!Number.isFinite(gained) || gained <= 0) return state
+
       const nextState = {
-        energy: state.energy + state.energyPerSecond,
-        totalEnergyEarned: state.totalEnergyEarned + state.energyPerSecond,
-        dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', state.energyPerSecond),
+        energy: state.energy + gained,
+        totalEnergyEarned: state.totalEnergyEarned + gained,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', gained),
       }
       const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
       void persistState({ ...state, ...finalState })
@@ -169,55 +186,91 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ achievementNotice: null })
     void persistState(get())
   },
-  hydrate: async () => {
-    const savedGame = await loadGame()
-    if (!savedGame) {
-      const today = getTodayKey()
-      set({ dailyTasks: createDailyTasks(today), dailyTaskDate: today, hydrated: true })
-      void persistState(get())
+  dismissCloudNotice: () => {
+    set({ cloudNotice: null })
+  },
+  syncCloudAfterAuthorization: async () => {
+    if (!get().hydrated) return
+    const cloudSave = await readCloudSave()
+    if (!cloudSave) {
+      // Облако пустое — просто начинаем синхронизацию текущего прогресса.
+      await pushCloudSave(buildPersistedSave(get()))
       return
     }
 
-    const offlineSeconds = Math.min(
-      Math.max(0, Math.floor((Date.now() - savedGame.savedAt) / 1000)),
-      8 * 60 * 60,
-    )
-    const offlineEnergy = offlineSeconds * savedGame.energyPerSecond
-    const today = getTodayKey()
-    const dailyTasks = savedGame.dailyTaskDate === today && savedGame.dailyTasks?.length
-      ? savedGame.dailyTasks
-      : createDailyTasks(today)
-    const nextState = {
-      ...savedGame,
-      energy: savedGame.energy + offlineEnergy,
-      sunwellLevel: savedGame.sunwellLevel ?? 0,
-      sunwellCost: savedGame.sunwellCost ?? 75,
-      eggCost: savedGame.eggCost ?? 100,
-      ownedCreatures: savedGame.ownedCreatures ?? {},
-      lastHatchedId: savedGame.lastHatchedId ?? null,
-      stars: savedGame.stars ?? 0,
-      eggInventory: savedGame.eggInventory ?? 0,
-      totalEnergyEarned: savedGame.totalEnergyEarned ?? 0,
-      eggsOpened: savedGame.eggsOpened ?? 0,
-      upgradesBought: savedGame.upgradesBought ?? 0,
-      totalClicks: savedGame.totalClicks ?? 0,
-      unlockedAchievements: savedGame.unlockedAchievements ?? [],
-      achievementNotice: null,
-      dailyTasks,
-      dailyTaskDate: today,
-      offlineEnergy,
-      hydrated: true,
+    const localSave = buildPersistedSave(get())
+    // Сравниваем с прогрессом, который был ДО текущей сессии: иначе локальная
+    // метка времени всегда «свежее» и облако никогда бы не загрузилось.
+    const localForComparison = { ...localSave, savedAt: localBaselineSavedAt }
+    const merged = resolveSaveConflict(localForComparison, cloudSave)
+    if (!merged) return
+
+    if (merged.source === 'cloud') {
+      const nextState = applyPersistedSave(merged.save, 0)
+      set({ ...nextState, cloudNotice: merged.notice })
+      await persistBackup(localSave)
+      // Локально сохраняем сразу, в облако не пишем: там уже эта версия.
+      await persistState(get(), { cloud: false })
+      return
     }
+
+    set({ cloudNotice: merged.notice ?? 'Прогресс сохранён в облако.' })
+    if (merged.backup) await persistBackup(merged.backup)
+    await pushCloudSave(buildPersistedSave(get()))
+  },
+  hydrate: async () => {
+    // Чтение сохранения не должно останавливать игру: при недоступном
+    // хранилище (приватный режим, заблокированный IndexedDB) стартуем с нуля.
+    const localSave = await safeLoadLocalSave()
+    // Облако сравниваем ДО первой записи локального прогресса, иначе только что
+    // сохранённые данные всегда выглядели бы свежее облачных.
+    const session = await waitForSdkSession()
+    authorizedAtHydrate = session?.isAuthorized ?? false
+    const cloudSave = session?.isAuthorized ? await readCloudGuarded() : null
+    const merged = resolveSaveConflict(localSave, cloudSave)
+
+    if (!merged) {
+      const today = getTodayKey()
+      set({
+        dailyTasks: createDailyTasks(today),
+        dailyTaskDate: today,
+        hydrated: true,
+        cloudNotice: null,
+      })
+      void persistState(get())
+      initCloudAutoSync()
+      return
+    }
+
+    localBaselineSavedAt = merged.save.savedAt
+    const offlineEnergy = calculateOfflineEnergy(merged.save.energyPerSecond, merged.save.savedAt)
+    const nextState = applyPersistedSave(merged.save, offlineEnergy)
     const finalState = { ...nextState, ...applyAchievementRewards({ ...get(), ...nextState }) }
-    set(finalState)
-    void persistState(get())
-  }
+
+    set({
+      ...finalState,
+      cloudNotice: merged.notice,
+      hydrated: true,
+    })
+
+    // Проигравшая версия уходит в резервный слот — старые сохранения не теряются.
+    if (merged.backup) await persistBackup(merged.backup)
+
+    await persistState(get())
+    // Локальный прогресс новее облачного — обновляем облако.
+    if (merged.source === 'local' && cloudSave) {
+      await pushCloudSave(buildPersistedSave(get()))
+    }
+    initCloudAutoSync()
+  },
 }))
 
 export const useEnergy = () => useGameStore((state) => state.energy)
 
-async function persistState(state: GameState): Promise<void> {
-  const persistedState: PersistedGame = {
+/** Собирает сохраняемый снимок из состояния стора. */
+function buildPersistedSave(state: GameState): PersistedGame {
+  return {
+    version: SAVE_VERSION,
     energy: state.energy,
     clickPower: state.clickPower,
     energyPerSecond: state.energyPerSecond,
@@ -226,20 +279,141 @@ async function persistState(state: GameState): Promise<void> {
     sunwellCost: state.sunwellCost,
     eggCost: state.eggCost,
     ownedCreatures: state.ownedCreatures,
-    lastHatchedId: state.lastHatchedId ?? undefined,
+    lastHatchedId: state.lastHatchedId,
     stars: state.stars,
     eggInventory: state.eggInventory,
     totalEnergyEarned: state.totalEnergyEarned,
     eggsOpened: state.eggsOpened,
     upgradesBought: state.upgradesBought,
-    dailyTasks: state.dailyTasks,
-    dailyTaskDate: state.dailyTaskDate,
     totalClicks: state.totalClicks,
     unlockedAchievements: state.unlockedAchievements,
+    dailyTasks: state.dailyTasks,
+    dailyTaskDate: state.dailyTaskDate,
     savedAt: Date.now(),
   }
-  await saveGame(persistedState)
 }
+
+/**
+ * Преобразует сохранение в состояние стора: добавляет офлайн-доход,
+ * обновляет ежедневные задания по дате и сбрасывает достижения.
+ */
+function applyPersistedSave(
+  save: PersistedGame,
+  offlineEnergy: number,
+): Partial<GameState> {
+  const today = getTodayKey()
+  const dailyTasks = save.dailyTaskDate === today && save.dailyTasks.length > 0
+    ? save.dailyTasks
+    : createDailyTasks(today)
+  // `version` и `savedAt` — детали формата хранения, в состоянии стора не нужны.
+  const { version: _version, savedAt: _savedAt, ...gameFields } = save
+
+  return {
+    ...gameFields,
+    energy: save.energy + offlineEnergy,
+    totalEnergyEarned: save.totalEnergyEarned + offlineEnergy,
+    achievementNotice: null,
+    dailyTasks,
+    dailyTaskDate: today,
+    offlineEnergy,
+    hydrated: true,
+  }
+}
+
+/** Сколько ждём инициализацию SDK перед выбором сохранения. */
+const SDK_SESSION_WAIT_MS = 2000
+
+/** Был ли игрок авторизован на момент загрузки сохранения. */
+let authorizedAtHydrate = false
+
+/** `savedAt` прогресса, с которого началась текущая сессия (до первых записей). */
+let localBaselineSavedAt = 0
+
+/** Офлайн-доход: не больше 8 часов отсутствия. */
+function calculateOfflineEnergy(energyPerSecond: number, savedAt: number): number {
+  const elapsedSeconds = Math.min(
+    Math.max(0, Math.floor((Date.now() - savedAt) / 1000)),
+    8 * 60 * 60,
+  )
+  return elapsedSeconds * energyPerSecond
+}
+
+async function safeLoadLocalSave(): Promise<PersistedGame | null> {
+  try {
+    return await loadGame()
+  } catch (error) {
+    console.info('[save] Не удалось прочитать локальное сохранение:', error)
+    return null
+  }
+}
+
+/** Облако читаем только для авторизованного игрока: гостю оно недоступно. */
+async function readCloudGuarded(): Promise<PersistedGame | null> {
+  try {
+    return await readCloudSave()
+  } catch (error) {
+    console.info('[cloud] Облачное сохранение недоступно:', error)
+    return null
+  }
+}
+
+/**
+ * Ждёт инициализацию SDK, но не дольше `SDK_SESSION_WAIT_MS`: игру нельзя
+ * задерживать из-за платформы. Если сессия не успела — работаем с локальным
+ * сохранением, а облако подтянется сразу после инициализации (см. ниже).
+ */
+async function waitForSdkSession(): Promise<SdkSession | null> {
+  const resolved = getSdkSessionSync()
+  if (resolved) return resolved
+
+  return Promise.race([
+    getSdkSession(),
+    new Promise<null>((resolve) => {
+      window.setTimeout(() => resolve(null), SDK_SESSION_WAIT_MS)
+    }),
+  ])
+}
+
+async function persistBackup(save: PersistedGame): Promise<void> {
+  try {
+    await saveBackupSave(save)
+  } catch (error) {
+    console.info('[save] Не удалось сохранить резервную копию:', error)
+  }
+}
+
+/**
+ * Записывает прогресс: локально — сразу, в облако — с задержкой,
+ * чтобы не превысить лимиты SDK.
+ */
+async function persistState(state: GameState, options: { cloud?: boolean } = {}): Promise<void> {
+  const persistedState = buildPersistedSave(state)
+
+  try {
+    await saveGame(persistedState)
+  } catch (error) {
+    console.info('[save] Не удалось записать прогресс:', error)
+  }
+
+  if (options.cloud !== false && getSdkSessionSync()?.isAuthorized) {
+    queueCloudSave(persistedState)
+  }
+}
+
+/**
+ * Реагирует на появление авторизации (игрок вошёл сам или SDK ответил уже после
+ * старта игры): подтягиваем облачный прогресс и начинаем синхронизацию.
+ */
+function bindCloudSyncOnAuthorization(): void {
+  onSdkSessionChange((session) => {
+    const becameAuthorized = session.isAuthorized && !authorizedAtHydrate
+    authorizedAtHydrate = session.isAuthorized
+    if (!becameAuthorized || !useGameStore.getState().hydrated) return
+    void useGameStore.getState().syncCloudAfterAuthorization()
+  })
+}
+
+bindCloudSyncOnAuthorization()
 
 function applyAchievementRewards(state: GameState): Pick<GameState, 'stars' | 'eggInventory' | 'unlockedAchievements' | 'achievementNotice'> {
   const progress: GameProgress = {
