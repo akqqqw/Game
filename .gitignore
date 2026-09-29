@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Архив для публикации собирается командой npm run release:yandex
+release

@@ -7,6 +7,7 @@
 
 import { installAdsDebugHelper } from './ads'
 import { initAudio } from './audio'
+import { installErrorHandling, installErrorsDebugHelper } from './errorHandling'
 import { initMobileFullscreen } from './fullscreen'
 import { installPlatformGuards } from './platformGuards'
 import { initGameLifecycle } from './gameLifecycle'
@@ -18,6 +19,8 @@ export function bootstrapPlatform(): void {
   if (started) return
   started = true
 
+  // Перехват ошибок ставим первым: он должен поймать в том числе ошибки запуска.
+  installErrorHandling()
   // Запреты браузера: контекстное меню, лонгтап, жесты масштабирования (п. 1.6.1.8, 1.20).
   installPlatformGuards()
   initGameLifecycle()
@@ -26,7 +29,10 @@ export function bootstrapPlatform(): void {
   // Звук: модуль сам останавливает звучание при паузе и рекламе (п. 1.3, 4.7).
   initAudio()
   // Рекламный модуль выключен по умолчанию; в dev доступны команды для проверки.
-  if (import.meta.env.DEV) installAdsDebugHelper()
+  if (import.meta.env.DEV) {
+    installAdsDebugHelper()
+    installErrorsDebugHelper()
+  }
 
   // Ошибка внутри уже обработана: промис всегда резолвится локальной сессией.
   void getSdkSession().then((session) => {

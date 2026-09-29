@@ -1,75 +1,108 @@
-# React + TypeScript + Vite
+# Острова Эволюции
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Игра-кликер про остров: игрок собирает энергию с древнего дерева, покупает
+улучшения, вылупляет существ из яиц, соединяет их в лаборатории слияний и
+застраивает остров жилищами под разные стихии.
 
-Currently, two official plugins are available:
+Проект подготовлен к публикации на [Яндекс Играх](https://yandex.ru/games/):
+подключён SDK платформы, есть облачные сохранения, пауза на рекламе и
+мобильное управление.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Стек
 
-## React Compiler
+React 19 + TypeScript + Vite, Zustand (состояние), Phaser 4 (сцена острова),
+IndexedDB (локальные сохранения) + облако Яндекс Игр.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Команды
 
-## Expanding the ESLint configuration
+| Команда | Что делает |
+|---|---|
+| `npm run dev` | Дев-сервер на `http://localhost:5173` (с моком SDK) |
+| `npm test` | Все тесты (unit + интеграционные, без браузера) |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | Проверка типов |
+| `npm run build` | Production-сборка в `dist` |
+| `npm run preview` | Просмотр собранной игры на `http://localhost:4173` |
+| `npm run release:yandex` | Сборка + архив для публикации в `release/` |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Локальный запуск
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+В дев-режиме вместо настоящего SDK отдаётся его мок (`/sdk.js` подменяется
+плагином Vite), поэтому игра запускается без платформы. Мок отвечает на те же
+методы, что и настоящий SDK: можно проверять облачные сохранения, рекламу и
+события платформы.
+
+Проверить с настоящим SDK (нужен доступ к `sdk.games.s3.yandex.net`):
+
+```bash
+npm run dev
+YANDEX_SDK_REAL=1 npx @yandex-games/sdk-dev-proxy -h http://localhost:5173 --dev-mode=true
+```
+
+Отладочные команды в консоли (только дев-сборка):
 
 ```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+window.__adsDebug.enable()          // включить рекламу и проверить показы
+window.__errorsDebug.list()         // последние перехваченные ошибки
 ```
+
+## Публикация на Яндекс Играх
+
+```bash
+npm run release:yandex
+```
+
+Команда собирает игру и складывает архив `release/evolution-isles.zip`. Скрипт
+упаковки сам проверяет требования платформы:
+
+- `index.html` лежит в корне архива (п. 1.22);
+- в архив не попадают исходники, source map, кэши и зависимости разработки;
+- размер в распакованном виде укладывается в 100 МБ (п. 1.21).
+
+Что указать в черновике игры:
+
+- **Архив** — `release/evolution-isles.zip`;
+- **Облачные сохранения** — включить (игра их использует, п. 1.11);
+- **Монетизация** — решается отдельно: реклама в коде есть, но **выключена**
+  по умолчанию (`configureAds({ enabled: true })` включает её);
+- **Поддерживаемые платформы** — десктоп и мобильные (телевизоры не заявлены);
+- **Ориентация** — любая: вёрстка работает и в портретной, и в альбомной.
+
+## Что внутри
+
+| Каталог | Содержание |
+|---|---|
+| `src/game` | Игровая логика: экономика, существа, слияния, жилища, сохранения |
+| `src/platform` | Слой платформы: SDK, облако, реклама, звук, пауза, ошибки |
+| `src/ui` | Небольшие экранные компоненты (загрузка, облачная панель) |
+| `tests` | Тесты игровой логики и платформенного слоя |
+| `scripts` | Упаковка архива, восстановление окружения |
+| `docs` | План работ по этапам и описание механик |
+
+Подробности: [`docs/yandex-games-plan.md`](docs/yandex-games-plan.md) — этапы
+подготовки к платформе, [`docs/gameplay-fusion-habitats.md`](docs/gameplay-fusion-habitats.md) —
+слияния, мутации и жилища.
+
+## Проверки
+
+```bash
+npm test && npm run lint && npm run typecheck && npm run build
+```
+
+Архив дополнительно проверяется системным распаковщиком:
+
+```bash
+unzip -t release/evolution-isles.zip
+```
+
+## Известные ограничения
+
+- **Реклама выключена** и не включается автоматически: игра корректно работает
+  без монетизации, включение — отдельное решение.
+- **Звуковых файлов нет**: модуль звука готов и подхватит их автоматически.
+- **Промо-ссылки** (`environment.referrer` из SDK) пока не обрабатываются.
