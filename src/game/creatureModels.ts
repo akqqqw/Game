@@ -65,6 +65,8 @@ export type ModelRecipe = {
   spin: number
   /** Амплитуда покачивания вверх-вниз (в единицах модели). */
   float: number
+  /** Амплитуда «дыхания» — лёгкого изменения высоты тела. */
+  breath: number
   /** Насколько сильно модель светится: 0 — обычное существо, 1 — мифическое. */
   glowStrength: number
 }
@@ -213,6 +215,7 @@ export function buildModelRecipe(input: {
     features: featuresFor(input.elements, input.rarity),
     spin: 0.3 + random() * 0.35,
     float: 0.03 + random() * 0.05,
+    breath: 0.012 + random() * 0.02,
     glowStrength: rarityGlow[input.rarity],
   }
 }

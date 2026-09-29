@@ -20,6 +20,8 @@ describe('рецепт модели существа', () => {
       expect(recipe.spin).toBeLessThan(1)
       expect(recipe.float).toBeGreaterThan(0)
       expect(recipe.float).toBeLessThan(0.2)
+      expect(recipe.breath).toBeGreaterThan(0)
+      expect(recipe.breath).toBeLessThan(0.2)
       expect(recipe.glowStrength).toBeGreaterThanOrEqual(0)
       expect(recipe.glowStrength).toBeLessThanOrEqual(1)
       for (const color of Object.values(recipe.colors)) {

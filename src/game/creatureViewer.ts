@@ -16,12 +16,15 @@
  */
 
 import {
+  AnimationClip,
+  AnimationMixer,
   Box3,
   Color,
   DirectionalLight,
   Group,
   HemisphereLight,
   PerspectiveCamera,
+  Object3D,
   PointLight,
   Scene,
   Vector3,
@@ -115,14 +118,70 @@ function normalizeModel(model: Group): void {
   model.position.y += (size.y * scale) / 2 - 0.9
 }
 
+/**
+ * Анимация, записанная в модели, — проигрыватель клипов.
+ * `clipName === null` означает «в модели анимации нет»: тогда витрина анимирует
+ * существо сама (вращение, покачивание, дыхание).
+ */
+export type ModelAnimator = {
+  /** Имя проигрываемого клипа или `null`, если анимации в модели нет. */
+  clipName: string | null
+  /** Продвигает анимацию на `delta` секунд. */
+  update: (delta: number) => void
+  /** Останавливает и освобождает микшер. */
+  dispose: () => void
+}
+
+/**
+ * Выбирает клип для показа.
+ * Приоритет — имя со словом `idle`: так анимация покоя подхватывается
+ * автоматически, даже если в файле есть и другие действия (походка, атака).
+ * Иначе берётся первый содержательный клип.
+ */
+export function pickAnimationClip(clips: AnimationClip[]): AnimationClip | null {
+  const usable = clips.filter((clip) => clip.duration > 0 && clip.tracks.length > 0)
+  if (usable.length === 0) return null
+  return usable.find((clip) => clip.name.toLowerCase().includes('idle')) ?? usable[0]
+}
+
+/**
+ * Готовит проигрыватель анимаций для загруженной модели.
+ * Вынесен отдельно от рендера, чтобы проверяться тестами без WebGL.
+ */
+export function createModelAnimator(root: Object3D, clips: AnimationClip[]): ModelAnimator {
+  const clip = pickAnimationClip(clips)
+  if (!clip) {
+    return { clipName: null, update: () => undefined, dispose: () => undefined }
+  }
+
+  const mixer = new AnimationMixer(root)
+  const action = mixer.clipAction(clip)
+  action.setLoop(2201 /* LoopRepeat */, Number.POSITIVE_INFINITY)
+  action.play()
+
+  return {
+    clipName: clip.name,
+    update: (delta) => {
+      if (delta > 0) mixer.update(delta)
+    },
+    dispose: () => {
+      action.stop()
+      mixer.stopAllAction()
+      mixer.uncacheRoot(root)
+    },
+  }
+}
+
+type LoadedModel = { scene: Group; animations: AnimationClip[] }
+
 /** Пытается загрузить модель из файла. Возвращает `null`, если файла нет или он битый. */
-async function loadModelFile(id: string): Promise<Group | null> {
+async function loadModelFile(id: string): Promise<LoadedModel | null> {
   try {
     const loader = new GLTFLoader()
     const gltf = await loader.loadAsync(creatureModelUrl(id))
     const model = gltf.scene as unknown as Group
     normalizeModel(model)
-    return model
+    return { scene: model, animations: gltf.animations ?? [] }
   } catch {
     // Файла ещё нет или он повреждён — это штатный случай: рисуем процедурную.
     return null
@@ -182,17 +241,29 @@ export async function mountCreatureViewer(
 
   let model: 'file' | 'procedural' = 'procedural'
   let disposeModel: () => void
+  let animator: ModelAnimator = { clipName: null, update: () => undefined, dispose: () => undefined }
 
-  const fileModel = hasModelFile(creature.id) ? await loadModelFile(creature.id) : null
-  if (fileModel) {
+  const loaded = hasModelFile(creature.id) ? await loadModelFile(creature.id) : null
+  if (loaded) {
     model = 'file'
-    pivot.add(fileModel)
-    disposeModel = () => disposeObject(fileModel)
+    pivot.add(loaded.scene)
+    // Если автор модели записал idle-анимацию, играет она; иначе витрина
+    // анимирует существо сама (см. ниже). Это и есть «потом» из плана: файл
+    // с анимацией подхватывается без единой правки кода.
+    animator = createModelAnimator(loaded.scene, loaded.animations)
+    disposeModel = () => {
+      animator.dispose()
+      disposeObject(loaded.scene)
+    }
   } else {
     const procedural = buildCreatureMesh(recipe)
     pivot.add(procedural.group)
     disposeModel = procedural.dispose
   }
+
+  // Своя анимация модели отменяет покачивание и дыхание: они бы спорили с ней.
+  // Вращение-витрина остаётся — игроку нужно рассмотреть существо со всех сторон.
+  const selfAnimated = animator.clipName !== null
 
   const animate = !prefersReducedMotion()
   let paused = isGamePaused()
@@ -225,8 +296,15 @@ export async function mountCreatureViewer(
 
     if (animate) {
       pivot.rotation.y += recipe.spin * delta
-      pivot.position.y = Math.sin(elapsed * 1.4) * recipe.float
-      pivot.rotation.z = Math.sin(elapsed * 0.9) * 0.03
+      // Дыхание и покачивание — только у моделей без собственной анимации.
+      if (selfAnimated) {
+        animator.update(delta)
+      } else {
+        pivot.position.y = Math.sin(elapsed * 1.4) * recipe.float
+        pivot.rotation.z = Math.sin(elapsed * 0.9) * 0.03
+        const breath = 1 + Math.sin(elapsed * 0.7) * recipe.breath
+        pivot.scale.set(1, breath, 1)
+      }
     }
 
     try {
