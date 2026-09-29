@@ -77,6 +77,33 @@
   border-radius: 6px;
 }
 
+/*
+ * Кнопка звука: маленькая, но с тач-зоной не меньше 44px (п. 1.8).
+ * Стоит отдельно от «пилюль» ресурсов, потому что те скрываются на мобильных.
+ */
+.sound-toggle {
+  display: grid;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  font-size: 17px;
+  background: rgba(5, 26, 35, 0.52);
+  border: 1px solid rgba(183, 231, 180, 0.14);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sound-toggle:hover {
+  border-color: rgba(232, 203, 115, 0.5);
+}
+
+.sound-toggle[aria-pressed='true'] {
+  color: #8eb3a7;
+  border-color: rgba(142, 179, 167, 0.28);
+  filter: saturate(0.4);
+}
+
 .achievement-toast {
   position: fixed;
   z-index: 4;

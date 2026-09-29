@@ -20,7 +20,7 @@ import {
 } from './game/habitats'
 import { startPassiveIncome, stopPassiveIncome } from './game/passiveIncome'
 import { requestAdPoint } from './platform/adPoints'
-import { unlockAudio } from './platform/audio'
+import { isMuted, play, playVaried, toggleMuted, unlockAudio } from './platform/audio'
 import { notifyGameReady } from './platform/yandexSdk'
 import { CloudBar } from './ui/CloudBar'
 import { LoadingScreen } from './ui/LoadingScreen'
@@ -87,9 +87,18 @@ function App() {
 
   const hydrateStarted = useRef(false)
   const [sceneReady, setSceneReady] = useState(false)
+  // Звук: состояние живёт в звуковом модуле, здесь только отражение для кнопки.
+  const [muted, setMuted] = useState(() => isMuted())
+  const handleToggleSound = useCallback(() => {
+    // Клик — это и жест пользователя: заодно разблокируем звук, если он новый.
+    void unlockAudio()
+    setMuted(toggleMuted())
+  }, [])
   const handleTreeClick = useCallback(() => {
     // Первое касание разблокирует звук: браузеры запрещают автозапуск аудио.
     void unlockAudio()
+    // Тон слегка варьируется и звук приглушён: частые клики не «пулеметят».
+    playVaried('click')
     addEnergy()
   }, [addEnergy])
   const handleSceneReady = useCallback(() => setSceneReady(true), [])
@@ -101,27 +110,47 @@ function App() {
    */
   const handleBuyClickUpgrade = useCallback(() => {
     const bought = buyClickUpgrade()
-    if (bought) requestAdPoint('upgrade-bought')
+    if (bought) {
+      play('upgrade')
+      requestAdPoint('upgrade-bought')
+    }
     return bought
   }, [buyClickUpgrade])
   const handleBuySunwell = useCallback(() => {
     const bought = buySunwell()
-    if (bought) requestAdPoint('upgrade-bought')
+    if (bought) {
+      play('upgrade')
+      requestAdPoint('upgrade-bought')
+    }
     return bought
   }, [buySunwell])
   const handleOpenEgg = useCallback(() => {
-    if (openEgg()) requestAdPoint('egg-hatched')
+    if (!openEgg()) return
+    // Мутировавшая особь звучит иначе — игрок слышит удачу, даже не глядя на баннер.
+    play(useGameStore.getState().lastHatchedMutated ? 'mutation' : 'egg')
+    requestAdPoint('egg-hatched')
   }, [openEgg])
   const handleUpgradeHabitat = useCallback((habitatId: HabitatId) => {
     const upgraded = upgradeHabitat(habitatId)
-    if (upgraded) requestAdPoint('habitat-upgraded')
+    if (upgraded) {
+      play('habitat')
+      requestAdPoint('habitat-upgraded')
+    }
     return upgraded
   }, [upgradeHabitat])
   /** Переход между экранами — логическая пауза; повторный тап по активному экрану не считается. */
   const handleScreenChange = useCallback((next: Screen) => {
-    if (next !== screen) requestAdPoint('screen-change')
+    if (next !== screen) {
+      play('ui')
+      requestAdPoint('screen-change')
+    }
     setScreen(next)
   }, [screen])
+
+  // Достижение: звук фанфары в момент появления уведомления.
+  useEffect(() => {
+    if (achievementNotice) play('achievement')
+  }, [achievementNotice])
   const lastHatched = lastHatchedId ? getCreature(lastHatchedId) : undefined
   const gameReady = hydrated && sceneReady
   const incomeMultiplier = 1 + habitatBonus
@@ -186,6 +215,16 @@ function App() {
           <span title="Звёзды постоянных наград">★ {stars}</span>
           <span title="Наградные яйца">🥚 {eggInventory}</span>
         </div>
+        <button
+          className="sound-toggle"
+          type="button"
+          aria-pressed={muted}
+          aria-label={muted ? 'Включить звук' : 'Выключить звук'}
+          title={muted ? 'Включить звук' : 'Выключить звук'}
+          onClick={handleToggleSound}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
       </header>
 
       <CloudBar />
@@ -622,6 +661,7 @@ function FusionLab({
       setMessage(`Успех: ${creature?.name ?? 'новое существо'}${outcome.mutated ? ' ✦ мутация' : ''} за ${outcome.cost.toLocaleString()} энергии.`)
       setFirst(null)
       setSecond(null)
+      play(outcome.mutated ? 'mutation' : 'fusion')
       requestAdPoint('fusion-done')
       return
     }
