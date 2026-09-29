@@ -18,6 +18,16 @@ vi.mock('../../src/game/PhaserGame', () => ({
   },
 }))
 
+/**
+ * Ожидание с запасом по времени: под параллельной нагрузкой полного прогона
+ * асинхронные шаги (динамический импорт, таймеры рекламы) могут занять больше
+ * секунды — таймаут по умолчанию делает такие проверки «мигающими».
+ */
+const waitFor = (
+  callback: () => void | Promise<void>,
+  timeout = 5000,
+): Promise<void> => vi.waitFor(callback, { timeout, interval: 20 })
+
 /** Поднимает свежий модульный граф игры с фейковым SDK и готовит сохранение. */
 async function prepare(saveOverrides: Record<string, unknown> = {}) {
   const sdk = installFakeSdk({ authorized: true, withAds: true })
@@ -49,6 +59,9 @@ type Prepared = Awaited<ReturnType<typeof prepare>>
 async function renderGame(prepared: Prepared): Promise<void> {
   render(<prepared.App />)
   await screen.findByRole('navigation', { name: 'Игровая навигация' })
+  // Ждём загрузку сохранения: до неё кнопки покупок неактивны, и клик по ним
+  // ничего не делает — из-за этого проверки показов рекламы «мигали».
+  await waitFor(() => expect(prepared.store.useGameStore.getState().hydrated).toBe(true))
 }
 
 /** Кнопка внутри блока с указанным заголовком (карточка или панель). */
@@ -77,13 +90,13 @@ describe('реклама после завершённого действия', 
 
     fireEvent.click(buttonInBlock('Лунное яйцо'))
 
-    await vi.waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
     // Сначала игрок получил существо, и только потом включилась реклама.
     expect(store.useGameStore.getState().lastHatchedId).toBeTruthy()
     expect(lifecycle.isGamePaused()).toBe(true)
 
     sdk.ads.closeFullscreen(true)
-    await vi.waitFor(() => expect(lifecycle.isGamePaused()).toBe(false))
+    await waitFor(() => expect(lifecycle.isGamePaused()).toBe(false))
   })
 
   it('покупка улучшения показывает рекламу', async () => {
@@ -95,7 +108,7 @@ describe('реклама после завершённого действия', 
     const clickPowerBefore = store.useGameStore.getState().clickPower
     fireEvent.click(buttonInBlock('Корни силы'))
 
-    await vi.waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
     // Улучшение действительно куплено: энергия списана, сила клика выросла.
     expect(store.useGameStore.getState().energy).toBeLessThan(energyBefore)
     expect(store.useGameStore.getState().clickPower).toBe(clickPowerBefore + 1)
@@ -109,10 +122,10 @@ describe('реклама после завершённого действия', 
     await renderGame(prepared)
 
     fireEvent.click(screen.getByRole('button', { name: /Существа/ }))
-    await vi.waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
 
     sdk.ads.closeFullscreen(true)
-    await vi.waitFor(() => expect(sdk.ads.pending()).toBe('none'))
+    await waitFor(() => expect(sdk.ads.pending()).toBe('none'))
 
     // Тап по уже открытому экрану — не переход, рекламы быть не должно.
     fireEvent.click(screen.getByRole('button', { name: /Существа/ }))

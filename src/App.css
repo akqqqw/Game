@@ -966,6 +966,51 @@ h1 {
   cursor: pointer;
 }
 
+/* --- Витрина существа: 3D-модель с запасным эмодзи ------------------------ */
+
+.creature-model {
+  position: relative;
+  width: 100%;
+  height: 190px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(159, 231, 214, 0.16), transparent 62%),
+    radial-gradient(circle at 50% 118%, rgba(232, 203, 115, 0.14), transparent 58%);
+  border-radius: 14px;
+}
+
+.creature-model canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.creature-model-emoji {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 200ms ease-out;
+}
+
+.creature-model-hint {
+  position: absolute;
+  right: 0;
+  bottom: 6px;
+  left: 0;
+  color: #7fa89b;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+@media (max-width: 560px) {
+  .creature-model {
+    height: 160px;
+  }
+}
+
 .modal-creature-emoji {
   margin-bottom: 13px;
   font-size: 58px;

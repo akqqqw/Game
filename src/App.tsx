@@ -24,6 +24,7 @@ import { requestAdPoint } from './platform/adPoints'
 import { isMuted, play, playVaried, toggleMuted, unlockAudio } from './platform/audio'
 import { notifyGameReady } from './platform/yandexSdk'
 import { CloudBar } from './ui/CloudBar'
+import { CreatureModel } from './ui/CreatureModel'
 import { LoadingScreen } from './ui/LoadingScreen'
 import './App.css'
 
@@ -1122,7 +1123,14 @@ function CreatureCollection({ ownedCreatures, mutations }: CreatureCollectionPro
         <div className="creature-modal-backdrop" role="presentation" onClick={() => setSelectedId(null)}>
           <section className={`creature-modal creature-${selectedCreature.rarity.toLowerCase()} ${selectedMutations > 0 ? 'creature-mutated' : ''}`} role="dialog" aria-modal="true" aria-label={`Характеристики: ${selectedCreature.name}`} onClick={(event) => event.stopPropagation()}>
             <button className="modal-close" type="button" aria-label="Закрыть характеристики существа" onClick={() => setSelectedId(null)}>×</button>
-            <div className="modal-creature-emoji">{selectedCreature.emoji}</div>
+            <CreatureModel
+              key={selectedCreature.id}
+              id={selectedCreature.id}
+              name={selectedCreature.name}
+              emoji={selectedCreature.emoji}
+              elements={selectedCreature.elements}
+              rarity={selectedCreature.rarity}
+            />
             <p className="eyebrow">
               Спутник · {rarityLabel(selectedCreature.rarity)}
               {selectedMutations > 0 && <span className="mutant-chip">✦ мутация</span>}
