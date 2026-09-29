@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fusionCostFor } from '../../src/game/balance'
 import { useGameStore } from '../../src/game/gameStore'
 import { computeHabitatSummary, createEmptyHabitats } from '../../src/game/habitats'
 import { saveGame } from '../../src/game/saveGame'
@@ -100,7 +101,7 @@ afterEach(() => {
 
 describe('лаборатория слияний в интерфейсе', () => {
   it('показывает результат слияния из примера: углехвост + каменный голем', async () => {
-    await seedSave({ energy: 1000, clickPower: 4, ownedCreatures: { emberfox: 1, stonegolem: 1 } })
+    await seedSave({ energy: 5000, clickPower: 4, ownedCreatures: { emberfox: 1, stonegolem: 1 } })
     await renderIsland()
 
     fireEvent.click(screen.getByRole('button', { name: /Существа/ }))
@@ -116,7 +117,7 @@ describe('лаборатория слияний в интерфейсе', () => 
 
     // Предпросмотр показывает, кто получится, и сколько это стоит.
     expect(within(lab).getByRole('heading', { name: 'Магмовый голем' })).toBeTruthy()
-    expect(lab.querySelector('.fusion-cost')?.textContent).toContain('400')
+    expect(lab.querySelector('.fusion-cost')?.textContent).toContain(fusionCostFor(400).toLocaleString())
 
     fireEvent.click(within(lab).getByRole('button', { name: 'Слить' }))
 
@@ -124,7 +125,7 @@ describe('лаборатория слияний в интерфейсе', () => 
     const state = useGameStore.getState()
     expect(state.ownedCreatures).toEqual({ magmagolem: 1 })
     expect(state.fusionsDone).toBe(1)
-    expect(state.energy).toBe(600)
+    expect(state.energy).toBe(5000 - fusionCostFor(400))
 
     // Новое существо появилось в коллекции.
     const collection = screen.getByRole('region', { name: 'Коллекция существ' })
@@ -177,7 +178,7 @@ describe('жилища в интерфейсе', () => {
   })
 
   it('постройка лесной рощи открывает слоты и позволяет заселить существо', async () => {
-    await seedSave({ energy: 500, ownedCreatures: { mossling: 1 } })
+    await seedSave({ energy: 100_000, ownedCreatures: { mossling: 1 } })
     await renderIsland()
 
     const section = screen.getByRole('region', { name: 'Среда обитания' })

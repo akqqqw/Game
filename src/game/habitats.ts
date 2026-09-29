@@ -16,6 +16,7 @@
  * Все функции здесь чистые — их удобно проверять тестами.
  */
 
+import { balance } from './balance'
 import { getCreature, isKnownCreatureId } from './creatures'
 import type { ElementId } from './elements'
 
@@ -116,10 +117,15 @@ export function habitatSlots(level: number): number {
   return Math.min(level, MAX_HABITAT_LEVEL) + 1
 }
 
-/** Стоимость перехода с уровня `level` на `level + 1`. */
+/**
+ * Стоимость перехода с уровня `level` на `level + 1`.
+ * Базовая цена берётся из описания жилища, а общий для всех жилищ множитель —
+ * из `balance`: так grindy-настройка экономики живёт в одном месте.
+ */
 export function habitatCost(definition: HabitatDefinition, level: number): number {
   if (level >= definition.maxLevel) return Number.POSITIVE_INFINITY
-  return Math.ceil(definition.baseCost * definition.costGrowth ** level)
+  const base = definition.baseCost * balance.habitats.costMultiplier
+  return Math.ceil(base * definition.costGrowth ** level)
 }
 
 export function createEmptyHabitats(): Record<HabitatId, HabitatState> {

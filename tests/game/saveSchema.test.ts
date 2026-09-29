@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { clickUpgradeCost, eggCostFor, sunwellCost } from '../../src/game/balance'
 import {
   SAVE_VERSION,
   createNewSave,
@@ -27,10 +28,33 @@ describe('нормализация сохранения', () => {
     expect(save?.energy).toBe(250)
     expect(save?.clickPower).toBe(3)
     expect(save?.energyPerSecond).toBe(1)
-    expect(save?.sunwellCost).toBe(75)
+    // Цены пересчитываются из прогресса: старые значения в сохранении не истина.
+    expect(save?.clickUpgradeLevel).toBe(2)
+    expect(save?.clickUpgradeCost).toBe(clickUpgradeCost(2))
+    expect(save?.sunwellCost).toBe(sunwellCost(0))
+    expect(save?.eggCost).toBe(eggCostFor(0, 3))
     expect(save?.stars).toBe(0)
     expect(save?.dailyTasks).toEqual([])
     expect(save?.savedAt).toBe(1_700_000_000_000)
+  })
+
+  it('не доверяет ценам из сохранения: считает их из прогресса', () => {
+    const cheated = makeSave({
+      version: SAVE_VERSION,
+      clickUpgradeLevel: 5,
+      // Подделанные «дешёвые» цены в файле.
+      clickUpgradeCost: 1,
+      sunwellLevel: 3,
+      sunwellCost: 1,
+      eggsOpened: 20,
+      eggCost: 1,
+    })
+
+    const save = normalizeSave(cheated)
+
+    expect(save?.clickUpgradeCost).toBe(clickUpgradeCost(5))
+    expect(save?.sunwellCost).toBe(sunwellCost(3))
+    expect(save?.eggCost).toBeGreaterThan(1)
   })
 
   it('отбрасывает данные, не похожие на сохранение игры', () => {
@@ -55,8 +79,11 @@ describe('нормализация сохранения', () => {
 
     expect(save?.energy).toBe(0)
     expect(save?.clickPower).toBe(1)
-    expect(save?.clickUpgradeCost).toBe(1)
+    // Повреждённая цена не ломает загрузку: уровень клика 0, цена базовая.
+    expect(save?.clickUpgradeLevel).toBe(0)
+    expect(save?.clickUpgradeCost).toBe(clickUpgradeCost(0))
     expect(save?.sunwellLevel).toBe(2)
+    expect(save?.sunwellCost).toBe(sunwellCost(2))
     expect(save?.stars).toBe(0)
     expect(save?.eggInventory).toBe(0)
     expect(save?.totalClicks).toBe(0)

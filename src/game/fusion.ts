@@ -12,6 +12,7 @@
  *    слиянии, но при слиянии шанс выше.
  */
 
+import { fusionCostFor } from './balance'
 import { getCreature } from './creatures'
 import type { ElementId } from './elements'
 import { elementPhrase } from './elements'
@@ -178,7 +179,7 @@ export function previewFusion(
     hidden: Boolean(recipe.secret) && !options.discoveredRecipes.includes(recipe.id),
     elements: result?.elements ?? [],
     parents,
-    affordable: options.energy >= recipe.cost,
+    affordable: options.energy >= fusionCostFor(recipe.cost),
   }
 }
 

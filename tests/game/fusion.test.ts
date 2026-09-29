@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { fusionCostFor } from '../../src/game/balance'
 import {
   creatures,
   eggPool,
@@ -125,7 +126,8 @@ describe('предпросмотр слияния', () => {
     const preview = previewFusion('emberfox', 'stonegolem', {
       discoveredRecipes: [],
       ownedCreatures: owned,
-      energy: 500,
+      // Ровно цена из баланса: слияние доступно.
+      energy: fusionCostFor(findRecipe('emberfox', 'stonegolem')!.cost),
     })
 
     expect(preview?.hidden).toBe(false)

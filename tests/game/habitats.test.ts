@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { balance } from '../../src/game/balance'
 import {
   MATCHING_RESIDENT_BONUS,
   OTHER_RESIDENT_BONUS,
@@ -54,7 +55,8 @@ describe('жилища: уровни и стоимость', () => {
     const forest = getHabitatDefinition('forest')
     const first = habitatCost(forest, 0)
     const second = habitatCost(forest, 1)
-    expect(first).toBe(forest.baseCost)
+    // Базовая цена берётся из описания жилища, множитель — из баланса.
+    expect(first).toBe(Math.ceil(forest.baseCost * balance.habitats.costMultiplier))
     expect(second).toBeGreaterThan(first)
     expect(habitatCost(forest, forest.maxLevel)).toBe(Number.POSITIVE_INFINITY)
   })

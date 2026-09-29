@@ -10,13 +10,25 @@
  */
 
 import { achievements } from './achievements'
+import { clickUpgradeCost, eggCostFor, referenceIncome, sunwellCost } from './balance'
 import { isKnownCreatureId } from './creatures'
 import type { DailyTask, DailyTaskKind } from './dailyTasks'
 import { fusionRecipes } from './fusion'
-import { createEmptyHabitats, sanitizeHabitats, type HabitatId, type HabitatState } from './habitats'
+import {
+  computeHabitatSummary,
+  createEmptyHabitats,
+  sanitizeHabitats,
+  type HabitatId,
+  type HabitatState,
+} from './habitats'
 
-/** Актуальная версия схемы сохранения. */
-export const SAVE_VERSION = 3
+/**
+ * Актуальная версия схемы сохранения.
+ * Версия 4: цены покупок больше не хранятся как истина — они пересчитываются
+ * из прогресса (число улучшений, вылупленных яиц), а в сохранении лежат только
+ * для совместимости.
+ */
+export const SAVE_VERSION = 4
 
 /** Ключ, под которым сохранение лежит в облаке Яндекс Игр. */
 export const CLOUD_SAVE_KEY = 'evolution-isles-save'
@@ -29,9 +41,14 @@ export type PersistedGame = {
   energy: number
   clickPower: number
   energyPerSecond: number
+  /** Сколько раз улучшали клик: из этого считается цена следующего улучшения. */
+  clickUpgradeLevel: number
+  /** Цена следующего улучшения клика — производная величина. */
   clickUpgradeCost: number
   sunwellLevel: number
+  /** Цена следующего солнечного источника — производная величина. */
   sunwellCost: number
+  /** Цена следующего яйца — производная величина. */
   eggCost: number
   ownedCreatures: Record<string, number>
   /** Мутировавшие копии существ: id вида → количество. */
@@ -59,10 +76,11 @@ const baseDefaults: Omit<PersistedGame, 'savedAt' | 'version' | 'habitats'> = {
   energy: 0,
   clickPower: 1,
   energyPerSecond: 0,
+  clickUpgradeLevel: 0,
   clickUpgradeCost: 25,
   sunwellLevel: 0,
-  sunwellCost: 75,
-  eggCost: 100,
+  sunwellCost: 150,
+  eggCost: 300,
   ownedCreatures: {},
   mutations: {},
   discoveredRecipes: [],
@@ -217,30 +235,86 @@ const migrations: Record<number, SaveMigration> = {
   // Версия 3 добавила слияния, мутации и жилища. Старый прогресс не теряется:
   // новые поля заполняются значениями по умолчанию в `buildSave`.
   2: (raw) => ({ ...raw, version: 3 }),
+  // Версия 4 переводит цены на новый баланс. Число купленных улучшений клика
+  // восстанавливаем из старой цены (25 × 1.65^уровень): игрок не теряет
+  // прогресс, но следующие покупки стоят по новым правилам.
+  3: (raw) => ({ ...raw, version: 4, clickUpgradeLevel: legacyClickLevel(raw.clickUpgradeCost) }),
+}
+
+/** Прежняя цена улучшения клика: 25 × 1.65^уровень. */
+const LEGACY_CLICK_BASE_COST = 25
+const LEGACY_CLICK_GROWTH = 1.65
+
+/**
+ * Восстанавливает число купленных улучшений клика из старой цены.
+ * Ограничение сверху — защита от подделанного сохранения с огромной ценой.
+ */
+function legacyClickLevel(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= LEGACY_CLICK_BASE_COST) return 0
+  const level = Math.log(value / LEGACY_CLICK_BASE_COST) / Math.log(LEGACY_CLICK_GROWTH)
+  return Math.min(1000, Math.max(0, Math.round(level)))
+}
+
+/**
+ * Цены покупок — производные от прогресса, а не данные игрока.
+ * Пересчитываются при каждой загрузке: подделанное сохранение не даст
+ * дешёвых цен, а смена баланса сразу применяется к текущему прогрессу.
+ */
+function pricesForProgress(inputs: {
+  clickUpgradeLevel: number
+  sunwellLevel: number
+  eggsOpened: number
+  clickPower: number
+  energyPerSecond: number
+  habitatBonus: number
+}): Pick<PersistedGame, 'clickUpgradeCost' | 'sunwellCost' | 'eggCost'> {
+  const income = referenceIncome({
+    clickPower: inputs.clickPower,
+    energyPerSecond: inputs.energyPerSecond,
+    habitatBonus: inputs.habitatBonus,
+  })
+
+  return {
+    clickUpgradeCost: clickUpgradeCost(inputs.clickUpgradeLevel),
+    sunwellCost: sunwellCost(inputs.sunwellLevel),
+    eggCost: eggCostFor(inputs.eggsOpened, income),
+  }
 }
 
 function buildSave(raw: Record<string, unknown>): PersistedGame {
   const ownedCreatures = sanitizeOwnedCreatures(raw.ownedCreatures)
+  const habitats = sanitizeHabitats(raw.habitats, ownedCreatures)
+  const clickUpgradeLevel = toInt(raw.clickUpgradeLevel, baseDefaults.clickUpgradeLevel)
+  const sunwellLevel = toInt(raw.sunwellLevel, baseDefaults.sunwellLevel)
+  const clickPower = toNumber(raw.clickPower, baseDefaults.clickPower)
+  const energyPerSecond = toNumber(raw.energyPerSecond, baseDefaults.energyPerSecond)
+  const eggsOpened = toInt(raw.eggsOpened, baseDefaults.eggsOpened)
 
   return {
     version: SAVE_VERSION,
     energy: toNumber(raw.energy, baseDefaults.energy),
-    clickPower: toNumber(raw.clickPower, baseDefaults.clickPower),
-    energyPerSecond: toNumber(raw.energyPerSecond, baseDefaults.energyPerSecond),
-    clickUpgradeCost: Math.max(1, toNumber(raw.clickUpgradeCost, baseDefaults.clickUpgradeCost)),
-    sunwellLevel: toInt(raw.sunwellLevel, baseDefaults.sunwellLevel),
-    sunwellCost: Math.max(1, toNumber(raw.sunwellCost, baseDefaults.sunwellCost)),
-    eggCost: Math.max(1, toNumber(raw.eggCost, baseDefaults.eggCost)),
+    clickPower,
+    energyPerSecond,
+    clickUpgradeLevel,
+    ...pricesForProgress({
+      clickUpgradeLevel,
+      sunwellLevel,
+      eggsOpened,
+      clickPower,
+      energyPerSecond,
+      habitatBonus: computeHabitatSummary(habitats, ownedCreatures).totalBonus,
+    }),
+    sunwellLevel,
     ownedCreatures,
     mutations: sanitizeMutations(raw.mutations, ownedCreatures),
-    habitats: sanitizeHabitats(raw.habitats, ownedCreatures),
+    habitats,
     discoveredRecipes: sanitizeRecipes(raw.discoveredRecipes),
     fusionsDone: toInt(raw.fusionsDone, baseDefaults.fusionsDone),
     lastHatchedId: sanitizeLastHatched(raw.lastHatchedId),
     stars: toInt(raw.stars, baseDefaults.stars),
     eggInventory: toInt(raw.eggInventory, baseDefaults.eggInventory),
     totalEnergyEarned: toNumber(raw.totalEnergyEarned, baseDefaults.totalEnergyEarned),
-    eggsOpened: toInt(raw.eggsOpened, baseDefaults.eggsOpened),
+    eggsOpened,
     upgradesBought: toInt(raw.upgradesBought, baseDefaults.upgradesBought),
     totalClicks: toInt(raw.totalClicks, baseDefaults.totalClicks),
     unlockedAchievements: sanitizeAchievements(raw.unlockedAchievements),

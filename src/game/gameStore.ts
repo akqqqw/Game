@@ -3,6 +3,15 @@ import { noteGameAction } from '../platform/ads'
 import { initCloudAutoSync, pushCloudSave, queueCloudSave, readCloudSave } from '../platform/cloudSave'
 import { getSdkSession, getSdkSessionSync, onSdkSessionChange, type SdkSession } from '../platform/yandexSdk'
 import { achievements, getAchievementProgress } from './achievements'
+import {
+  balance,
+  clickUpgradeCost,
+  eggCostFor,
+  fusionCostFor,
+  offlineLimitSeconds,
+  referenceIncome,
+  sunwellCost,
+} from './balance'
 import { eggPool, getCreature, secretCreatures } from './creatures'
 import { advanceDailyTasks, createDailyTasks, getTodayKey, type DailyTask } from './dailyTasks'
 import { MUTATION_CHANCE_EGG, MUTATION_CHANCE_FUSION, findRecipe } from './fusion'
@@ -32,9 +41,14 @@ type GameState = {
   energy: number
   clickPower: number
   energyPerSecond: number
+  /** Сколько раз улучшали клик — из этого считается цена следующей покупки. */
+  clickUpgradeLevel: number
+  /** Цена следующего улучшения клика: производная от уровня, не хранится как истина. */
   clickUpgradeCost: number
   sunwellLevel: number
+  /** Цена следующего солнечного источника: производная от уровня. */
   sunwellCost: number
+  /** Цена следующего яйца: производная от числа вылуплений и дохода острова. */
   eggCost: number
   ownedCreatures: Record<string, number>
   /** Мутировавшие копии видов: id → количество. */
@@ -95,365 +109,432 @@ type GameState = {
 
 const emptyHabitatState = recomputeHabitats(createEmptyHabitats(), {})
 
-export const useGameStore = create<GameState>((set, get) => ({
-  energy: 0,
-  clickPower: 1,
-  energyPerSecond: 1,
-  clickUpgradeCost: 25,
-  sunwellLevel: 0,
-  sunwellCost: 75,
-  eggCost: 100,
-  ownedCreatures: {},
-  mutations: {},
-  discoveredRecipes: [],
-  fusionsDone: 0,
-  lastHatchedId: null,
-  lastHatchedMutated: false,
-  fusionNotice: null,
-  ...emptyHabitatState,
-  stars: 0,
-  eggInventory: 0,
-  totalEnergyEarned: 0,
-  eggsOpened: 0,
-  upgradesBought: 0,
-  dailyTasks: [],
-  dailyTaskDate: '',
-  totalClicks: 0,
-  unlockedAchievements: [],
-  achievementNotice: null,
-  offlineEnergy: 0,
-  hydrated: false,
-  cloudNotice: null,
-  addEnergy: () =>
-    set((state) => {
-      // Пейсинг рекламы: счётчик действий игрока (показ рекламы не запускает).
+/**
+ * Цены покупок — производные от прогресса. Считаются при каждом обновлении
+ * состояния, поэтому не могут «отстать» от счётчиков, а сохранение не может
+ * назначить их самому себе (при загрузке они пересчитываются заново).
+ */
+function derivedPrices(state: {
+  clickUpgradeLevel: number
+  sunwellLevel: number
+  eggsOpened: number
+  clickPower: number
+  energyPerSecond: number
+  habitatBonus: number
+}): Pick<GameState, 'clickUpgradeCost' | 'sunwellCost' | 'eggCost'> {
+  const income = referenceIncome({
+    clickPower: state.clickPower,
+    energyPerSecond: state.energyPerSecond,
+    habitatBonus: state.habitatBonus,
+  })
+
+  return {
+    clickUpgradeCost: clickUpgradeCost(state.clickUpgradeLevel),
+    sunwellCost: sunwellCost(state.sunwellLevel),
+    eggCost: eggCostFor(state.eggsOpened, income),
+  }
+}
+
+/**
+ * Накладывает изменение на состояние и заново считает цены.
+ * Единственный путь записи в стор: и действия игры, и внешние обновления
+ * (например, из тестов) проходят здесь, поэтому цены не могут «отстать» от
+ * прогресса, чем бы ни изменилось состояние.
+ */
+function withPrices(
+  state: GameState,
+  partial: Partial<GameState> | ((current: GameState) => Partial<GameState>),
+): Partial<GameState> {
+  const next = typeof partial === 'function' ? partial(state) : partial
+  return { ...next, ...derivedPrices({ ...state, ...next }) }
+}
+
+export const useGameStore = create<GameState>((setBase, get) => {
+  const set = (
+    partial: Partial<GameState> | ((state: GameState) => Partial<GameState>),
+  ): void => {
+    setBase((state) => withPrices(state, partial))
+  }
+
+  return {
+    energy: 0,
+    clickPower: 1,
+    energyPerSecond: 1,
+    clickUpgradeLevel: 0,
+    clickUpgradeCost: clickUpgradeCost(0),
+    sunwellLevel: 0,
+    sunwellCost: sunwellCost(0),
+    eggCost: eggCostFor(0, referenceIncome({ clickPower: 1, energyPerSecond: 1, habitatBonus: 0 })),
+    ownedCreatures: {},
+    mutations: {},
+    discoveredRecipes: [],
+    fusionsDone: 0,
+    lastHatchedId: null,
+    lastHatchedMutated: false,
+    fusionNotice: null,
+    ...emptyHabitatState,
+    stars: 0,
+    eggInventory: 0,
+    totalEnergyEarned: 0,
+    eggsOpened: 0,
+    upgradesBought: 0,
+    dailyTasks: [],
+    dailyTaskDate: '',
+    totalClicks: 0,
+    unlockedAchievements: [],
+    achievementNotice: null,
+    offlineEnergy: 0,
+    hydrated: false,
+    cloudNotice: null,
+    addEnergy: () =>
+      set((state) => {
+        // Пейсинг рекламы: счётчик действий игрока (показ рекламы не запускает).
+        noteGameAction()
+        const gain = state.clickPower * incomeMultiplier(state)
+        const nextState = {
+          energy: state.energy + gain,
+          totalClicks: state.totalClicks + 1,
+          totalEnergyEarned: state.totalEnergyEarned + gain,
+          dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', gain),
+        }
+        const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+        void persistState({ ...state, ...finalState })
+        return finalState
+      }),
+    accruePassiveEnergy: (seconds) =>
+      set((state) => {
+        const gained = state.energyPerSecond * incomeMultiplier(state) * seconds
+        if (!Number.isFinite(gained) || gained <= 0) return state
+
+        const nextState = {
+          energy: state.energy + gained,
+          totalEnergyEarned: state.totalEnergyEarned + gained,
+          dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', gained),
+        }
+        const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+        void persistState({ ...state, ...finalState })
+        return finalState
+      }),
+    buyClickUpgrade: () => {
+      const state = get()
+      if (state.energy < state.clickUpgradeCost) return false
       noteGameAction()
-      const gain = state.clickPower * incomeMultiplier(state)
-      const nextState = {
-        energy: state.energy + gain,
-        totalClicks: state.totalClicks + 1,
-        totalEnergyEarned: state.totalEnergyEarned + gain,
-        dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', gain),
-      }
-      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-      void persistState({ ...state, ...finalState })
-      return finalState
-    }),
-  accruePassiveEnergy: (seconds) =>
-    set((state) => {
-      const gained = state.energyPerSecond * incomeMultiplier(state) * seconds
-      if (!Number.isFinite(gained) || gained <= 0) return state
 
       const nextState = {
-        energy: state.energy + gained,
-        totalEnergyEarned: state.totalEnergyEarned + gained,
-        dailyTasks: advanceDailyTasks(state.dailyTasks, 'earn_energy', gained),
+        energy: state.energy - state.clickUpgradeCost,
+        clickPower: state.clickPower + balance.click.powerGain,
+        clickUpgradeLevel: state.clickUpgradeLevel + 1,
+        upgradesBought: state.upgradesBought + 1,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'buy_upgrades', 1),
       }
       const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
       void persistState({ ...state, ...finalState })
-      return finalState
-    }),
-  buyClickUpgrade: () => {
-    const state = get()
-    if (state.energy < state.clickUpgradeCost) return false
-    noteGameAction()
+      return true
+    },
+    buySunwell: () => {
+      const state = get()
+      if (state.energy < state.sunwellCost) return false
+      noteGameAction()
 
-    const nextState = {
-      energy: state.energy - state.clickUpgradeCost,
-      clickPower: state.clickPower + 1,
-      clickUpgradeCost: Math.ceil(state.clickUpgradeCost * 1.65),
-      upgradesBought: state.upgradesBought + 1,
-      dailyTasks: advanceDailyTasks(state.dailyTasks, 'buy_upgrades', 1),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return true
-  },
-  buySunwell: () => {
-    const state = get()
-    if (state.energy < state.sunwellCost) return false
-    noteGameAction()
+      const nextState = {
+        energy: state.energy - state.sunwellCost,
+        energyPerSecond: state.energyPerSecond + balance.sunwell.productionGain,
+        sunwellLevel: state.sunwellLevel + 1,
+        upgradesBought: state.upgradesBought + 1,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'buy_upgrades', 1),
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
+    openEgg: () => {
+      const state = get()
+      const usesInventoryEgg = state.eggInventory > 0
+      if (!usesInventoryEgg && state.energy < state.eggCost) return false
 
-    const nextState = {
-      energy: state.energy - state.sunwellCost,
-      energyPerSecond: state.energyPerSecond + 2,
-      sunwellLevel: state.sunwellLevel + 1,
-      sunwellCost: Math.ceil(state.sunwellCost * 1.7),
-      upgradesBought: state.upgradesBought + 1,
-      dailyTasks: advanceDailyTasks(state.dailyTasks, 'buy_upgrades', 1),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return true
-  },
-  openEgg: () => {
-    const state = get()
-    const usesInventoryEgg = state.eggInventory > 0
-    if (!usesInventoryEgg && state.energy < state.eggCost) return false
-
-    const roll = Math.random() * 100
-    let threshold = 0
-    const creature = eggPool.find((candidate) => {
-      threshold += candidate.weight
-      return roll < threshold
-    })
-    const hatched = creature ?? eggPool[0]
-    if (!hatched) return false
-    noteGameAction()
-
-    // Мутация: шанс небольшой, но мутировавшая копия удваивает бонус вида.
-    const mutated = Math.random() < MUTATION_CHANCE_EGG
-    const units = mutated ? 2 : 1
-
-    const ownedCreatures = {
-      ...state.ownedCreatures,
-      [hatched.id]: (state.ownedCreatures[hatched.id] ?? 0) + 1,
-    }
-    const nextState = {
-      energy: usesInventoryEgg ? state.energy : state.energy - state.eggCost,
-      eggInventory: usesInventoryEgg ? state.eggInventory - 1 : state.eggInventory,
-      clickPower: state.clickPower + hatched.clickBonus * units,
-      energyPerSecond: state.energyPerSecond + hatched.productionBonus * units,
-      ownedCreatures,
-      mutations: mutated
-        ? { ...state.mutations, [hatched.id]: (state.mutations[hatched.id] ?? 0) + 1 }
-        : state.mutations,
-      lastHatchedId: hatched.id,
-      lastHatchedMutated: mutated,
-      eggsOpened: state.eggsOpened + 1,
-      dailyTasks: advanceDailyTasks(state.dailyTasks, 'open_eggs', 1),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return true
-  },
-  fuseCreatures: (aId, bId) => {
-    const state = get()
-    const recipe = findRecipe(aId, bId)
-    if (!recipe) return { ok: false, reason: 'no-recipe' }
-
-    const result = getCreature(recipe.result)
-    if (!result) return { ok: false, reason: 'no-recipe' }
-
-    // Для слияния одного и того же вида нужно две копии.
-    const needed = aId === bId ? 2 : 1
-    if ((state.ownedCreatures[aId] ?? 0) < needed) return { ok: false, reason: 'not-owned' }
-    if (aId !== bId && (state.ownedCreatures[bId] ?? 0) < 1) return { ok: false, reason: 'not-owned' }
-    if (state.energy < recipe.cost) return { ok: false, reason: 'not-enough-energy' }
-    noteGameAction()
-
-    // Родители расходуются: обычные копии уходят первыми, мутировавшие — в последнюю очередь.
-    let ownedCreatures = { ...state.ownedCreatures }
-    let mutations = { ...state.mutations }
-    let removedClick = 0
-    let removedProduction = 0
-
-    for (const parentId of recipe.ingredients) {
-      const consumed = consumeCopy(ownedCreatures, mutations, parentId)
-      if (!consumed) return { ok: false, reason: 'not-owned' }
-      ownedCreatures = consumed.ownedCreatures
-      mutations = consumed.mutations
-      const parent = getCreature(parentId)
-      removedClick += (parent?.clickBonus ?? 0) * consumed.units
-      removedProduction += (parent?.productionBonus ?? 0) * consumed.units
-    }
-
-    const mutated = Math.random() < MUTATION_CHANCE_FUSION
-    const units = mutated ? 2 : 1
-
-    ownedCreatures[result.id] = (ownedCreatures[result.id] ?? 0) + 1
-    if (mutated) mutations[result.id] = (mutations[result.id] ?? 0) + 1
-
-    const nextState = {
-      energy: state.energy - recipe.cost,
-      clickPower: Math.max(0, state.clickPower - removedClick + result.clickBonus * units),
-      energyPerSecond: Math.max(0, state.energyPerSecond - removedProduction + result.productionBonus * units),
-      ownedCreatures,
-      mutations,
-      // Жильцы, чьи копии ушли в слияние, выселяются автоматически.
-      ...recomputeHabitats(state.habitats, ownedCreatures),
-      discoveredRecipes: state.discoveredRecipes.includes(recipe.id)
-        ? state.discoveredRecipes
-        : [...state.discoveredRecipes, recipe.id],
-      fusionsDone: state.fusionsDone + 1,
-      lastHatchedId: null,
-      fusionNotice: mutated
-        ? `Слияние удалось: ${result.name} ✦ мутация!`
-        : `Слияние удалось: ${result.name}`,
-      dailyTasks: advanceDailyTasks(state.dailyTasks, 'fuse', 1),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return { ok: true, resultId: result.id, mutated, cost: recipe.cost }
-  },
-  upgradeHabitat: (habitatId) => {
-    const state = get()
-    const definition = getHabitatDefinition(habitatId)
-    const current = state.habitats[habitatId] ?? { level: 0, residents: [] }
-    if (current.level >= definition.maxLevel) return false
-
-    const cost = habitatCost(definition, current.level)
-    if (!Number.isFinite(cost) || state.energy < cost) return false
-    noteGameAction()
-
-    const level = current.level + 1
-    const habitats = {
-      ...state.habitats,
-      [habitatId]: { level, residents: current.residents.slice(0, habitatSlots(level)) },
-    }
-    const nextState = {
-      energy: state.energy - cost,
-      ...recomputeHabitats(habitats, state.ownedCreatures),
-      upgradesBought: state.upgradesBought + 1,
-      dailyTasks: advanceDailyTasks(state.dailyTasks, 'build_habitats', 1),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return true
-  },
-  assignResident: (habitatId, creatureId) => {
-    const state = get()
-    const check = canAssignResident(state.habitats, state.ownedCreatures, habitatId, creatureId)
-    // «Уже живёт» — это не ошибка: существо просто переезжает в другое жилище.
-    if (!check.ok && check.reason !== 'already-resident') return false
-
-    const habitats: Record<HabitatId, HabitatState> = { ...state.habitats }
-    for (const id of Object.keys(habitats) as HabitatId[]) {
-      habitats[id] = { ...habitats[id], residents: habitats[id].residents.filter((id2) => id2 !== creatureId) }
-    }
-
-    const target = habitats[habitatId]
-    if (target.residents.length >= habitatSlots(target.level)) return false
-    habitats[habitatId] = { ...target, residents: [...target.residents, creatureId] }
-
-    const nextState = { ...recomputeHabitats(habitats, state.ownedCreatures) }
-    set(nextState)
-    void persistState({ ...get() })
-    return true
-  },
-  removeResident: (habitatId, creatureId) => {
-    const state = get()
-    const habitat = state.habitats[habitatId]
-    if (!habitat || !habitat.residents.includes(creatureId)) return false
-
-    const habitats = {
-      ...state.habitats,
-      [habitatId]: { ...habitat, residents: habitat.residents.filter((id) => id !== creatureId) },
-    }
-    set({ ...recomputeHabitats(habitats, state.ownedCreatures) })
-    void persistState({ ...get() })
-    return true
-  },
-  claimTask: (taskId) => {
-    const state = get()
-    const task = state.dailyTasks.find((candidate) => candidate.id === taskId)
-    if (!task || task.claimed || task.progress < task.target) return false
-
-    const nextState = {
-      stars: state.stars + task.rewardStars,
-      eggInventory: state.eggInventory + task.rewardEggs,
-      dailyTasks: state.dailyTasks.map((candidate) => candidate.id === taskId
-        ? { ...candidate, claimed: true }
-        : candidate),
-    }
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
-    set(finalState)
-    void persistState({ ...state, ...finalState })
-    return true
-  },
-  dismissAchievementNotice: () => {
-    set({ achievementNotice: null })
-    void persistState(get())
-  },
-  dismissFusionNotice: () => {
-    set({ fusionNotice: null })
-    void persistState(get())
-  },
-  dismissCloudNotice: () => {
-    set({ cloudNotice: null })
-  },
-  syncCloudAfterAuthorization: async () => {
-    if (!get().hydrated) return
-    const cloudSave = await readCloudSave()
-    if (!cloudSave) {
-      // Облако пустое — просто начинаем синхронизацию текущего прогресса.
-      await pushCloudSave(buildPersistedSave(get()))
-      return
-    }
-
-    const localSave = buildPersistedSave(get())
-    // Сравниваем с прогрессом, который был ДО текущей сессии: иначе локальная
-    // метка времени всегда «свежее» и облако никогда бы не загрузилось.
-    const localForComparison = { ...localSave, savedAt: localBaselineSavedAt }
-    const merged = resolveSaveConflict(localForComparison, cloudSave)
-    if (!merged) return
-
-    if (merged.source === 'cloud') {
-      const nextState = applyPersistedSave(merged.save, 0)
-      set({ ...nextState, cloudNotice: merged.notice })
-      await persistBackup(localSave)
-      // Локально сохраняем сразу, в облако не пишем: там уже эта версия.
-      await persistState(get(), { cloud: false })
-      return
-    }
-
-    set({ cloudNotice: merged.notice ?? 'Прогресс сохранён в облако.' })
-    if (merged.backup) await persistBackup(merged.backup)
-    await pushCloudSave(buildPersistedSave(get()))
-  },
-  hydrate: async () => {
-    // Чтение сохранения не должно останавливать игру: при недоступном
-    // хранилище (приватный режим, заблокированный IndexedDB) стартуем с нуля.
-    const localSave = await safeLoadLocalSave()
-    // Облако сравниваем ДО первой записи локального прогресса, иначе только что
-    // сохранённые данные всегда выглядели бы свежее облачных.
-    const session = await waitForSdkSession()
-    authorizedAtHydrate = session?.isAuthorized ?? false
-    const cloudSave = session?.isAuthorized ? await readCloudGuarded() : null
-    const merged = resolveSaveConflict(localSave, cloudSave)
-
-    if (!merged) {
-      const today = getTodayKey()
-      set({
-        dailyTasks: createDailyTasks(today),
-        dailyTaskDate: today,
-        hydrated: true,
-        cloudNotice: null,
+      const roll = Math.random() * 100
+      let threshold = 0
+      const creature = eggPool.find((candidate) => {
+        threshold += candidate.weight
+        return roll < threshold
       })
+      const hatched = creature ?? eggPool[0]
+      if (!hatched) return false
+      noteGameAction()
+
+      // Мутация: шанс небольшой, но мутировавшая копия удваивает бонус вида.
+      const mutated = Math.random() < MUTATION_CHANCE_EGG
+      const units = mutated ? 2 : 1
+
+      const ownedCreatures = {
+        ...state.ownedCreatures,
+        [hatched.id]: (state.ownedCreatures[hatched.id] ?? 0) + 1,
+      }
+      const nextState = {
+        energy: usesInventoryEgg ? state.energy : state.energy - state.eggCost,
+        eggInventory: usesInventoryEgg ? state.eggInventory - 1 : state.eggInventory,
+        clickPower: state.clickPower + hatched.clickBonus * units,
+        energyPerSecond: state.energyPerSecond + hatched.productionBonus * units,
+        ownedCreatures,
+        mutations: mutated
+          ? { ...state.mutations, [hatched.id]: (state.mutations[hatched.id] ?? 0) + 1 }
+          : state.mutations,
+        lastHatchedId: hatched.id,
+        lastHatchedMutated: mutated,
+        eggsOpened: state.eggsOpened + 1,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'open_eggs', 1),
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
+    fuseCreatures: (aId, bId) => {
+      const state = get()
+      const recipe = findRecipe(aId, bId)
+      if (!recipe) return { ok: false, reason: 'no-recipe' }
+
+      const result = getCreature(recipe.result)
+      if (!result) return { ok: false, reason: 'no-recipe' }
+
+      // Для слияния одного и того же вида нужно две копии.
+      const needed = aId === bId ? 2 : 1
+      if ((state.ownedCreatures[aId] ?? 0) < needed) return { ok: false, reason: 'not-owned' }
+      if (aId !== bId && (state.ownedCreatures[bId] ?? 0) < 1) return { ok: false, reason: 'not-owned' }
+      const cost = fusionCostFor(recipe.cost)
+      if (state.energy < cost) return { ok: false, reason: 'not-enough-energy' }
+      noteGameAction()
+
+      // Родители расходуются: обычные копии уходят первыми, мутировавшие — в последнюю очередь.
+      let ownedCreatures = { ...state.ownedCreatures }
+      let mutations = { ...state.mutations }
+      let removedClick = 0
+      let removedProduction = 0
+
+      for (const parentId of recipe.ingredients) {
+        const consumed = consumeCopy(ownedCreatures, mutations, parentId)
+        if (!consumed) return { ok: false, reason: 'not-owned' }
+        ownedCreatures = consumed.ownedCreatures
+        mutations = consumed.mutations
+        const parent = getCreature(parentId)
+        removedClick += (parent?.clickBonus ?? 0) * consumed.units
+        removedProduction += (parent?.productionBonus ?? 0) * consumed.units
+      }
+
+      const mutated = Math.random() < MUTATION_CHANCE_FUSION
+      const units = mutated ? 2 : 1
+
+      ownedCreatures[result.id] = (ownedCreatures[result.id] ?? 0) + 1
+      if (mutated) mutations[result.id] = (mutations[result.id] ?? 0) + 1
+
+      const nextState = {
+        energy: state.energy - cost,
+        clickPower: Math.max(0, state.clickPower - removedClick + result.clickBonus * units),
+        energyPerSecond: Math.max(0, state.energyPerSecond - removedProduction + result.productionBonus * units),
+        ownedCreatures,
+        mutations,
+        // Жильцы, чьи копии ушли в слияние, выселяются автоматически.
+        ...recomputeHabitats(state.habitats, ownedCreatures),
+        discoveredRecipes: state.discoveredRecipes.includes(recipe.id)
+          ? state.discoveredRecipes
+          : [...state.discoveredRecipes, recipe.id],
+        fusionsDone: state.fusionsDone + 1,
+        lastHatchedId: null,
+        fusionNotice: mutated
+          ? `Слияние удалось: ${result.name} ✦ мутация!`
+          : `Слияние удалось: ${result.name}`,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'fuse', 1),
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return { ok: true, resultId: result.id, mutated, cost }
+    },
+    upgradeHabitat: (habitatId) => {
+      const state = get()
+      const definition = getHabitatDefinition(habitatId)
+      const current = state.habitats[habitatId] ?? { level: 0, residents: [] }
+      if (current.level >= definition.maxLevel) return false
+
+      const cost = habitatCost(definition, current.level)
+      if (!Number.isFinite(cost) || state.energy < cost) return false
+      noteGameAction()
+
+      const level = current.level + 1
+      const habitats = {
+        ...state.habitats,
+        [habitatId]: { level, residents: current.residents.slice(0, habitatSlots(level)) },
+      }
+      const nextState = {
+        energy: state.energy - cost,
+        ...recomputeHabitats(habitats, state.ownedCreatures),
+        upgradesBought: state.upgradesBought + 1,
+        dailyTasks: advanceDailyTasks(state.dailyTasks, 'build_habitats', 1),
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
+    assignResident: (habitatId, creatureId) => {
+      const state = get()
+      const check = canAssignResident(state.habitats, state.ownedCreatures, habitatId, creatureId)
+      // «Уже живёт» — это не ошибка: существо просто переезжает в другое жилище.
+      if (!check.ok && check.reason !== 'already-resident') return false
+
+      const habitats: Record<HabitatId, HabitatState> = { ...state.habitats }
+      for (const id of Object.keys(habitats) as HabitatId[]) {
+        habitats[id] = { ...habitats[id], residents: habitats[id].residents.filter((id2) => id2 !== creatureId) }
+      }
+
+      const target = habitats[habitatId]
+      if (target.residents.length >= habitatSlots(target.level)) return false
+      habitats[habitatId] = { ...target, residents: [...target.residents, creatureId] }
+
+      const nextState = { ...recomputeHabitats(habitats, state.ownedCreatures) }
+      set(nextState)
+      void persistState({ ...get() })
+      return true
+    },
+    removeResident: (habitatId, creatureId) => {
+      const state = get()
+      const habitat = state.habitats[habitatId]
+      if (!habitat || !habitat.residents.includes(creatureId)) return false
+
+      const habitats = {
+        ...state.habitats,
+        [habitatId]: { ...habitat, residents: habitat.residents.filter((id) => id !== creatureId) },
+      }
+      set({ ...recomputeHabitats(habitats, state.ownedCreatures) })
+      void persistState({ ...get() })
+      return true
+    },
+    claimTask: (taskId) => {
+      const state = get()
+      const task = state.dailyTasks.find((candidate) => candidate.id === taskId)
+      if (!task || task.claimed || task.progress < task.target) return false
+
+      const nextState = {
+        stars: state.stars + task.rewardStars,
+        eggInventory: state.eggInventory + task.rewardEggs,
+        dailyTasks: state.dailyTasks.map((candidate) => candidate.id === taskId
+          ? { ...candidate, claimed: true }
+          : candidate),
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
+    dismissAchievementNotice: () => {
+      set({ achievementNotice: null })
       void persistState(get())
-      initCloudAutoSync()
-      return
-    }
+    },
+    dismissFusionNotice: () => {
+      set({ fusionNotice: null })
+      void persistState(get())
+    },
+    dismissCloudNotice: () => {
+      set({ cloudNotice: null })
+    },
+    syncCloudAfterAuthorization: async () => {
+      if (!get().hydrated) return
+      const cloudSave = await readCloudSave()
+      if (!cloudSave) {
+        // Облако пустое — просто начинаем синхронизацию текущего прогресса.
+        await pushCloudSave(buildPersistedSave(get()))
+        return
+      }
 
-    localBaselineSavedAt = merged.save.savedAt
-    const nextState = applyPersistedSave(
-      merged.save,
-      calculateOfflineEnergy(merged.save.energyPerSecond, merged.save.habitats, merged.save.ownedCreatures, merged.save.savedAt),
-    )
-    const finalState = { ...nextState, ...applyAchievementRewards({ ...get(), ...nextState }) }
+      const localSave = buildPersistedSave(get())
+      // Сравниваем с прогрессом, который был ДО текущей сессии: иначе локальная
+      // метка времени всегда «свежее» и облако никогда бы не загрузилось.
+      const localForComparison = { ...localSave, savedAt: localBaselineSavedAt }
+      const merged = resolveSaveConflict(localForComparison, cloudSave)
+      if (!merged) return
 
-    set({
-      ...finalState,
-      cloudNotice: merged.notice,
-      hydrated: true,
-    })
+      if (merged.source === 'cloud') {
+        const nextState = applyPersistedSave(merged.save, 0)
+        set({ ...nextState, cloudNotice: merged.notice })
+        await persistBackup(localSave)
+        // Локально сохраняем сразу, в облако не пишем: там уже эта версия.
+        await persistState(get(), { cloud: false })
+        return
+      }
 
-    // Проигравшая версия уходит в резервный слот — старые сохранения не теряются.
-    if (merged.backup) await persistBackup(merged.backup)
-
-    await persistState(get())
-    // Локальный прогресс новее облачного — обновляем облако.
-    if (merged.source === 'local' && cloudSave) {
+      set({ cloudNotice: merged.notice ?? 'Прогресс сохранён в облако.' })
+      if (merged.backup) await persistBackup(merged.backup)
       await pushCloudSave(buildPersistedSave(get()))
-    }
-    initCloudAutoSync()
-  },
-}))
+    },
+    hydrate: async () => {
+      // Чтение сохранения не должно останавливать игру: при недоступном
+      // хранилище (приватный режим, заблокированный IndexedDB) стартуем с нуля.
+      const localSave = await safeLoadLocalSave()
+      // Облако сравниваем ДО первой записи локального прогресса, иначе только что
+      // сохранённые данные всегда выглядели бы свежее облачных.
+      const session = await waitForSdkSession()
+      authorizedAtHydrate = session?.isAuthorized ?? false
+      const cloudSave = session?.isAuthorized ? await readCloudGuarded() : null
+      const merged = resolveSaveConflict(localSave, cloudSave)
+
+      if (!merged) {
+        const today = getTodayKey()
+        set({
+          dailyTasks: createDailyTasks(today),
+          dailyTaskDate: today,
+          hydrated: true,
+          cloudNotice: null,
+        })
+        void persistState(get())
+        initCloudAutoSync()
+        return
+      }
+
+      localBaselineSavedAt = merged.save.savedAt
+      const nextState = applyPersistedSave(
+        merged.save,
+        calculateOfflineEnergy(merged.save.energyPerSecond, merged.save.habitats, merged.save.ownedCreatures, merged.save.savedAt),
+      )
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...get(), ...nextState }) }
+
+      set({
+        ...finalState,
+        cloudNotice: merged.notice,
+        hydrated: true,
+      })
+
+      // Проигравшая версия уходит в резервный слот — старые сохранения не теряются.
+      if (merged.backup) await persistBackup(merged.backup)
+
+      await persistState(get())
+      // Локальный прогресс новее облачного — обновляем облако.
+      if (merged.source === 'local' && cloudSave) {
+        await pushCloudSave(buildPersistedSave(get()))
+      }
+      initCloudAutoSync()
+    },
+  }
+})
+
+/**
+ * Внешние обновления (тесты, отладочные инструменты) тоже проходят через
+ * пересчёт цен — иначе засеянное состояние могло бы держать устаревшие цены.
+ */
+const rawSetState = useGameStore.setState.bind(useGameStore)
+useGameStore.setState = ((partial, replace) => {
+  if (replace) {
+    rawSetState(partial as GameState, true)
+    return
+  }
+  rawSetState((state: GameState) => withPrices(
+    state,
+    typeof partial === 'function'
+      ? (partial as (current: GameState) => Partial<GameState>)
+      : (partial as Partial<GameState>),
+  ) as GameState)
+}) as typeof useGameStore.setState
 
 export const useEnergy = () => useGameStore((state) => state.energy)
 
@@ -507,10 +588,9 @@ function buildPersistedSave(state: GameState): PersistedGame {
     energy: state.energy,
     clickPower: state.clickPower,
     energyPerSecond: state.energyPerSecond,
-    clickUpgradeCost: state.clickUpgradeCost,
+    clickUpgradeLevel: state.clickUpgradeLevel,
     sunwellLevel: state.sunwellLevel,
-    sunwellCost: state.sunwellCost,
-    eggCost: state.eggCost,
+    ...derivedPrices(state),
     ownedCreatures: state.ownedCreatures,
     mutations: state.mutations,
     habitats: state.habitats,
@@ -570,7 +650,7 @@ let authorizedAtHydrate = false
 /** `savedAt` прогресса, с которого началась текущая сессия (до первых записей). */
 let localBaselineSavedAt = 0
 
-/** Офлайн-доход: не больше 8 часов отсутствия, с учётом бонуса жилищ. */
+/** Офлайн-доход за время отсутствия (не больше лимита из баланса), с бонусом жилищ. */
 function calculateOfflineEnergy(
   energyPerSecond: number,
   habitats: Record<HabitatId, HabitatState>,
@@ -579,7 +659,7 @@ function calculateOfflineEnergy(
 ): number {
   const elapsedSeconds = Math.min(
     Math.max(0, Math.floor((Date.now() - savedAt) / 1000)),
-    8 * 60 * 60,
+    offlineLimitSeconds(),
   )
   const bonus = computeHabitatSummary(habitats, ownedCreatures).totalBonus
   return elapsedSeconds * energyPerSecond * (1 + bonus)

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { achievements, getAchievementProgress } from './game/achievements'
+import { fusionCostFor } from './game/balance'
 import { bonusCopies, creatures, getCreature, rarityLabel, secretCreatures, type Rarity } from './game/creatures'
 import type { DailyTask } from './game/dailyTasks'
 import { elementEmoji, elementPhrase } from './game/elements'
@@ -737,7 +738,7 @@ function FusionLab({
             </p>
           </div>
           <div className="fusion-actions">
-            <span className="fusion-cost">{preview.recipe.cost.toLocaleString()} ✦</span>
+            <span className="fusion-cost">{fusionCostFor(preview.recipe.cost).toLocaleString()} ✦</span>
             <button className="small-action" type="button" disabled={!canFuse} onClick={handleFuse}>
               Слить
             </button>
@@ -773,7 +774,7 @@ function FusionLab({
                 {result?.emoji} {result?.name}
                 {recipe.secret && <i className="mutant-mark"> ✦ тайна</i>}
               </span>
-              <span className="recipe-cost">{recipe.cost.toLocaleString()} ✦</span>
+              <span className="recipe-cost">{fusionCostFor(recipe.cost).toLocaleString()} ✦</span>
             </article>
           )
         })}

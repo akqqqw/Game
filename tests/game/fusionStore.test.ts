@@ -1,10 +1,13 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fusionCostFor } from '../../src/game/balance'
 import { getCreature } from '../../src/game/creatures'
 import { useGameStore } from '../../src/game/gameStore'
-import { computeHabitatSummary, createEmptyHabitats } from '../../src/game/habitats'
+import { computeHabitatSummary, createEmptyHabitats, getHabitatDefinition, habitatCost } from '../../src/game/habitats'
 
 const emptyHabitats = createEmptyHabitats()
+/** Цена постройки первого уровня жилища и цена слияния в тестах. */
+const forestBuildCost = habitatCost(getHabitatDefinition('forest'), 0)
 
 /** Сброс стора к предсказуемому состоянию: тесты не зависят друг от друга. */
 function resetStore(overrides: Record<string, unknown> = {}): void {
@@ -12,10 +15,10 @@ function resetStore(overrides: Record<string, unknown> = {}): void {
     energy: 0,
     clickPower: 1,
     energyPerSecond: 0,
-    clickUpgradeCost: 25,
+    // Цены — производные от прогресса, поэтому сбрасываем счётчики, а не цены.
+    clickUpgradeLevel: 0,
     sunwellLevel: 0,
-    sunwellCost: 75,
-    eggCost: 100,
+    eggsOpened: 0,
     ownedCreatures: {},
     mutations: {},
     habitats: createEmptyHabitats(),
@@ -69,7 +72,7 @@ describe('слияние существ в игровом сторе', () => {
   it('соединяет двух существ, расходует родителей и энергию', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 1000,
+      energy: 5000,
       // Углехвост (2 к клику) + Каменный голем (2 к клику) — ровно то, что было добавлено при вылуплении.
       clickPower: 4,
       energyPerSecond: 3,
@@ -81,10 +84,10 @@ describe('слияние существ в игровом сторе', () => {
 
     const outcome = useGameStore.getState().fuseCreatures('emberfox', 'stonegolem')
 
-    expect(outcome).toEqual({ ok: true, resultId: 'magmagolem', mutated: false, cost: 400 })
+    expect(outcome).toEqual({ ok: true, resultId: 'magmagolem', mutated: false, cost: fusionCostFor(400) })
     const state = useGameStore.getState()
     expect(state.ownedCreatures).toEqual({ magmagolem: 1 })
-    expect(state.energy).toBe(600)
+    expect(state.energy).toBe(5000 - fusionCostFor(400))
     // Бонусы родителей ушли, бонус результата добавился.
     expect(state.clickPower).toBe(3)
     expect(state.energyPerSecond).toBe(4)
@@ -99,7 +102,7 @@ describe('слияние существ в игровом сторе', () => {
   it('две копии одного вида дают существо слияния', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 600,
+      energy: 5000,
       clickPower: 4,
       ownedCreatures: { thornling: 2 },
     })
@@ -109,14 +112,14 @@ describe('слияние существ в игровом сторе', () => {
     expect(outcome.ok).toBe(true)
     const state = useGameStore.getState()
     expect(state.ownedCreatures).toEqual({ thornbeast: 1 })
-    expect(state.energy).toBe(100)
+    expect(state.energy).toBe(5000 - fusionCostFor(500))
     expect(state.clickPower).toBe(6)
   })
 
   it('мутация при слиянии удваивает бонус нового существа', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.01)
     resetStore({
-      energy: 1000,
+      energy: 5000,
       clickPower: 4,
       energyPerSecond: 3,
       ownedCreatures: { emberfox: 1, stonegolem: 1 },
@@ -124,7 +127,7 @@ describe('слияние существ в игровом сторе', () => {
 
     const outcome = useGameStore.getState().fuseCreatures('emberfox', 'stonegolem')
 
-    expect(outcome).toEqual({ ok: true, resultId: 'magmagolem', mutated: true, cost: 400 })
+    expect(outcome).toEqual({ ok: true, resultId: 'magmagolem', mutated: true, cost: fusionCostFor(400) })
     const state = useGameStore.getState()
     expect(state.mutations).toEqual({ magmagolem: 1 })
     expect(state.clickPower).toBe(6)
@@ -136,7 +139,7 @@ describe('слияние существ в игровом сторе', () => {
   it('обычные копии уходят первыми, мутировавшие — последними', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 1000,
+      energy: 5000,
       // Колючник: две обычные копии и одна мутировавшая — 4 «единицы» бонуса по 2 к клику.
       clickPower: 8,
       ownedCreatures: { thornling: 3 },
@@ -156,7 +159,7 @@ describe('слияние существ в игровом сторе', () => {
   it('если других копий нет — уходит мутировавшая, снимая двойной бонус', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 1000,
+      energy: 5000,
       clickPower: 4,
       ownedCreatures: { dewfin: 1, petalimp: 1 },
       mutations: { dewfin: 1 },
@@ -202,7 +205,7 @@ describe('слияние существ в игровом сторе', () => {
   it('секретное существо открывается слиянием и попадает в рецепты', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 5000,
+      energy: 20_000,
       clickPower: 8,
       ownedCreatures: { mosswarden: 1, sunspirit: 1 },
     })
@@ -244,7 +247,7 @@ describe('вылупление с мутацией', () => {
   it('мутировавшая особь получает двойной бонус и место в коллекции', () => {
     // Первый вызов — выбор существа, второй — проверка мутации.
     vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.01)
-    resetStore({ energy: 100, clickPower: 1, energyPerSecond: 0 })
+    resetStore({ energy: 1000, clickPower: 1, energyPerSecond: 0 })
 
     useGameStore.getState().openEgg()
 
@@ -257,7 +260,7 @@ describe('вылупление с мутацией', () => {
 
   it('без мутации бонус обычный', () => {
     vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.99)
-    resetStore({ energy: 100, clickPower: 1 })
+    resetStore({ energy: 1000, clickPower: 1 })
 
     useGameStore.getState().openEgg()
 
@@ -270,7 +273,7 @@ describe('вылупление с мутацией', () => {
   it('секретные существа из яиц не выпадают', () => {
     // 0.9999 — почти конец диапазона весов: берём последнего в пуле.
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.9999).mockReturnValueOnce(0.99)
-    resetStore({ energy: 100, clickPower: 1 })
+    resetStore({ energy: 1000, clickPower: 1 })
 
     useGameStore.getState().openEgg()
 
@@ -282,13 +285,13 @@ describe('вылупление с мутацией', () => {
 
 describe('жилища в игровом сторе', () => {
   it('постройка списывает энергию и даёт слоты', () => {
-    resetStore({ energy: 500, ownedCreatures: { mossling: 1 } })
+    resetStore({ energy: 100_000, ownedCreatures: { mossling: 1 } })
 
     const built = useGameStore.getState().upgradeHabitat('forest')
 
     expect(built).toBe(true)
     const state = useGameStore.getState()
-    expect(state.energy).toBe(100)
+    expect(state.energy).toBe(100_000 - forestBuildCost)
     expect(state.habitats.forest.level).toBe(1)
     expect(state.habitatSummary.perHabitat[0].slots).toBe(2)
     expect(state.upgradesBought).toBe(1)
@@ -303,7 +306,7 @@ describe('жилища в игровом сторе', () => {
   })
 
   it('заселение даёт бонус к доходу, выселение его убирает', () => {
-    resetStore({ energy: 500, ownedCreatures: { mossling: 1 } })
+    resetStore({ energy: 100_000, ownedCreatures: { mossling: 1 } })
     useGameStore.getState().upgradeHabitat('forest')
 
     expect(useGameStore.getState().assignResident('forest', 'mossling')).toBe(true)
@@ -315,14 +318,14 @@ describe('жилища в игровом сторе', () => {
   })
 
   it('нельзя заселить существо, которого нет в коллекции', () => {
-    resetStore({ energy: 500 })
+    resetStore({ energy: 100_000 })
     useGameStore.getState().upgradeHabitat('forest')
 
     expect(useGameStore.getState().assignResident('forest', 'mossling')).toBe(false)
   })
 
   it('жилец переезжает в другое жилище, а не двоится', () => {
-    resetStore({ energy: 5000, ownedCreatures: { emberfox: 1 } })
+    resetStore({ energy: 200_000, ownedCreatures: { emberfox: 1 } })
     useGameStore.getState().upgradeHabitat('forest')
     useGameStore.getState().upgradeHabitat('volcano')
     useGameStore.getState().assignResident('forest', 'emberfox')
@@ -337,7 +340,7 @@ describe('жилища в игровом сторе', () => {
   })
 
   it('бонус жилищ увеличивает и клик, и пассивный доход', () => {
-    resetStore({ energy: 500, clickPower: 100, energyPerSecond: 100, ownedCreatures: { mossling: 1 } })
+    resetStore({ energy: 100_000, clickPower: 100, energyPerSecond: 100, ownedCreatures: { mossling: 1 } })
     useGameStore.getState().upgradeHabitat('forest')
     useGameStore.getState().assignResident('forest', 'mossling')
 
@@ -352,7 +355,7 @@ describe('жилища в игровом сторе', () => {
   it('после слияния выселяется жилец, чьи копии закончились', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     resetStore({
-      energy: 1000,
+      energy: 100_000,
       clickPower: 4,
       ownedCreatures: { mossling: 1, petalimp: 1, stonegolem: 1 },
     })
