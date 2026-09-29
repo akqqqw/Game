@@ -5,7 +5,7 @@
  * инициализация SDK идёт в фоне и ни при каких условиях не блокирует запуск игры.
  */
 
-import { installAdsDebugHelper } from './ads'
+import { configureAds, installAdsDebugHelper } from './ads'
 import { initAudio } from './audio'
 import { installErrorHandling, installErrorsDebugHelper } from './errorHandling'
 import { initMobileFullscreen } from './fullscreen'
@@ -28,8 +28,18 @@ export function bootstrapPlatform(): void {
   initMobileFullscreen()
   // Звук: модуль сам останавливает звучание при паузе и рекламе (п. 1.3, 4.7).
   initAudio()
-  // Рекламный модуль выключен по умолчанию; в dev доступны команды для проверки.
+  // Реклама включена: точки показа расставлены в логических паузах
+  // (см. `src/platform/adPoints.ts`). Отключается одной строкой:
+  // configureAds({ enabled: false }) — игра при этом не меняется.
+  configureAds({ enabled: true })
+
   if (import.meta.env.DEV) {
+    // Ускоренный пейсинг для проверки точек показа: ?adsFast=1
+    // (в production не действует — только для ручной проверки в dev).
+    if (new URLSearchParams(window.location.search).get('adsFast') === '1') {
+      configureAds({ firstAdDelayMs: 5_000, interstitialCooldownMs: 15_000, interstitialMinActions: 3 })
+      console.info('[ads] Ускоренный режим проверки: ?adsFast=1')
+    }
     installAdsDebugHelper()
     installErrorsDebugHelper()
   }

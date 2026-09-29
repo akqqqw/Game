@@ -19,6 +19,7 @@ import {
   type HabitatSummary,
 } from './game/habitats'
 import { startPassiveIncome, stopPassiveIncome } from './game/passiveIncome'
+import { requestAdPoint } from './platform/adPoints'
 import { unlockAudio } from './platform/audio'
 import { notifyGameReady } from './platform/yandexSdk'
 import { CloudBar } from './ui/CloudBar'
@@ -38,7 +39,7 @@ function formatNumber(value: number): string {
 }
 
 function App() {
-  const [screen, setScreen] = useState<'island' | 'upgrades' | 'creatures' | 'achievements'>('island')
+  const [screen, setScreen] = useState<Screen>('island')
   const energy = useEnergy()
   const addEnergy = useGameStore((state) => state.addEnergy)
 
@@ -92,6 +93,35 @@ function App() {
     addEnergy()
   }, [addEnergy])
   const handleSceneReady = useCallback(() => setSceneReady(true), [])
+
+  /**
+   * Реклама показывается только после завершённого действия игрока и никогда —
+   * по самому клику (см. `src/platform/adPoints.ts`). Если действие не прошло
+   * (не хватает энергии), показа не будет.
+   */
+  const handleBuyClickUpgrade = useCallback(() => {
+    const bought = buyClickUpgrade()
+    if (bought) requestAdPoint('upgrade-bought')
+    return bought
+  }, [buyClickUpgrade])
+  const handleBuySunwell = useCallback(() => {
+    const bought = buySunwell()
+    if (bought) requestAdPoint('upgrade-bought')
+    return bought
+  }, [buySunwell])
+  const handleOpenEgg = useCallback(() => {
+    if (openEgg()) requestAdPoint('egg-hatched')
+  }, [openEgg])
+  const handleUpgradeHabitat = useCallback((habitatId: HabitatId) => {
+    const upgraded = upgradeHabitat(habitatId)
+    if (upgraded) requestAdPoint('habitat-upgraded')
+    return upgraded
+  }, [upgradeHabitat])
+  /** Переход между экранами — логическая пауза; повторный тап по активному экрану не считается. */
+  const handleScreenChange = useCallback((next: Screen) => {
+    if (next !== screen) requestAdPoint('screen-change')
+    setScreen(next)
+  }, [screen])
   const lastHatched = lastHatchedId ? getCreature(lastHatchedId) : undefined
   const gameReady = hydrated && sceneReady
   const incomeMultiplier = 1 + habitatBonus
@@ -205,7 +235,7 @@ function App() {
           className="upgrade-button"
           type="button"
           disabled={!hydrated || energy < clickUpgradeCost}
-          onClick={buyClickUpgrade}
+          onClick={handleBuyClickUpgrade}
         >
           <span>✦</span>
           <strong>{clickUpgradeCost.toLocaleString()}</strong>
@@ -229,7 +259,7 @@ function App() {
             className="small-action"
             type="button"
             disabled={!hydrated || energy < sunwellCost}
-            onClick={buySunwell}
+            onClick={handleBuySunwell}
           >
             {sunwellCost.toLocaleString()} <span>✦</span>
           </button>
@@ -246,7 +276,7 @@ function App() {
             className="small-action egg-action"
             type="button"
             disabled={!hydrated || energy < eggCost}
-            onClick={openEgg}
+            onClick={handleOpenEgg}
           >
             {eggInventory > 0 ? 'Бесплатно' : <>{eggCost.toLocaleString()} <span>✦</span></>}
           </button>
@@ -277,7 +307,7 @@ function App() {
             hydrated={hydrated}
             ownedCreatures={ownedCreatures}
             mutations={mutations}
-            upgradeHabitat={upgradeHabitat}
+            upgradeHabitat={handleUpgradeHabitat}
             assignResident={assignResident}
             removeResident={removeResident}
           />
@@ -295,8 +325,8 @@ function App() {
           hydrated={hydrated}
           sunwellCost={sunwellCost}
           sunwellLevel={sunwellLevel}
-          buyClickUpgrade={buyClickUpgrade}
-          buySunwell={buySunwell}
+          buyClickUpgrade={handleBuyClickUpgrade}
+          buySunwell={handleBuySunwell}
         />
       ) : screen === 'creatures' ? (
         <>
@@ -316,22 +346,24 @@ function App() {
       </div>
 
       <nav className="bottom-nav" aria-label="Игровая навигация">
-        <button className={`nav-item ${screen === 'island' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('island')}>
+        <button className={`nav-item ${screen === 'island' ? 'nav-item-active' : ''}`} type="button" onClick={() => handleScreenChange('island')}>
           <span>◈</span> Остров
         </button>
-        <button className={`nav-item ${screen === 'upgrades' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('upgrades')}>
+        <button className={`nav-item ${screen === 'upgrades' ? 'nav-item-active' : ''}`} type="button" onClick={() => handleScreenChange('upgrades')}>
           <span>✧</span> Улучшения
         </button>
-        <button className={`nav-item ${screen === 'creatures' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('creatures')}>
+        <button className={`nav-item ${screen === 'creatures' ? 'nav-item-active' : ''}`} type="button" onClick={() => handleScreenChange('creatures')}>
           <span>♧</span> Существа
         </button>
-        <button className={`nav-item ${screen === 'achievements' ? 'nav-item-active' : ''}`} type="button" onClick={() => setScreen('achievements')}>
+        <button className={`nav-item ${screen === 'achievements' ? 'nav-item-active' : ''}`} type="button" onClick={() => handleScreenChange('achievements')}>
           <span>🏆</span> Достижения
         </button>
       </nav>
     </main>
   )
 }
+
+type Screen = 'island' | 'upgrades' | 'creatures' | 'achievements'
 
 type HabitatSectionProps = {
   summary: HabitatSummary
@@ -590,6 +622,7 @@ function FusionLab({
       setMessage(`Успех: ${creature?.name ?? 'новое существо'}${outcome.mutated ? ' ✦ мутация' : ''} за ${outcome.cost.toLocaleString()} энергии.`)
       setFirst(null)
       setSecond(null)
+      requestAdPoint('fusion-done')
       return
     }
     setMessage(fusionErrors[outcome.reason])

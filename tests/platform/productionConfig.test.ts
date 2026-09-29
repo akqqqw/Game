@@ -126,14 +126,20 @@ describe('секреты в клиентском коде', () => {
 })
 
 describe.skipIf(!distBuilt)('готовый dist', () => {
-  const distIndex = readFileSync(join(distDir, 'index.html'), 'utf8')
+  /**
+   * Читаем лениво: тело `describe` выполняется даже при `skipIf`, поэтому
+   * чтение файла на этапе регистрации ломало весь файл без собранного dist.
+   */
+  const readDistIndex = (): string => readFileSync(join(distDir, 'index.html'), 'utf8')
 
   it('ссылается на ресурсы относительными путями', () => {
+    const distIndex = readDistIndex()
     expect(distIndex).not.toMatch(/(src|href)="\//)
     expect(distIndex).toContain('./assets/')
   })
 
   it('все ресурсы из index.html и CSS лежат на месте', () => {
+    const distIndex = readDistIndex()
     const cssFiles = readdirSync(join(distDir, 'assets')).filter((name) => name.endsWith('.css'))
     const referenced = [
       ...[...distIndex.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((match) => match[1]),
