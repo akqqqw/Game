@@ -41,17 +41,14 @@ while IFS= read -r file; do
 done < <(git ls-tree -r --name-only FETCH_HEAD)
 
 if [ "$bad" -eq 0 ]; then
-  echo "    все файлы совпадают с origin"
-fi
-
-# Есть ли незакоммиченные правки: их терять нельзя, поэтому ветку не трогаем.
-dirty="$(git status --porcelain | wc -l | tr -d ' ')"
-if [ "$dirty" != "0" ]; then
-  echo "==> В рабочей копии есть незакоммиченные изменения ($dirty) — выравниваю историю без сброса файлов"
-  git reset -q FETCH_HEAD
-else
-  echo "==> Рабочая копия чистая — переключаю ветку на origin"
+  echo "    все файлы совпадают с origin — безопасно переключаю ветку"
   git checkout -f -B "$BRANCH" FETCH_HEAD >/dev/null
+else
+  # Рабочая копия отличается от origin: в ней могут быть незакоммиченные
+  # правки, поэтому историю выравниваем без сброса файлов.
+  echo "==> Рабочая копия отличается от origin — выравниваю историю без сброса файлов"
+  echo "    (если расхождения неожиданные, проверьте их перед коммитом)"
+  git reset -q FETCH_HEAD
 fi
 echo "    ветка: $(git log --oneline -1)"
 
