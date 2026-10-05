@@ -57,11 +57,18 @@ export type AdsConfig = {
   rewardedTimeoutMs: number
 }
 
+/**
+ * Пейсинг по умолчанию — это и есть продакшен-режим: реклама включается
+ * отдельно (`enabled: false`), а частоту задают эти числа. Кулдаун и порог
+ * действий дают примерно показ раз в 1,5–2 минуты активной игры, но никогда —
+ * «на каждый клик»: сначала должно пройти не меньше 12 действий, пауза между
+ * показами и первые 45 секунд сессии.
+ */
 const defaultConfig: AdsConfig = {
   enabled: false,
-  interstitialCooldownMs: 3 * 60_000,
-  interstitialMinActions: 25,
-  firstAdDelayMs: 2 * 60_000,
+  interstitialCooldownMs: 90_000,
+  interstitialMinActions: 12,
+  firstAdDelayMs: 45_000,
   rewardedCooldownMs: 30_000,
   interstitialTimeoutMs: 60_000,
   rewardedTimeoutMs: 120_000,

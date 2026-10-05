@@ -50,6 +50,11 @@ export type BalanceConfig = {
     softCapAfter: number
     softCapGrowth: number
     maxIncomeSeconds: number
+    /**
+     * Кулдаун бесплатного яйца за добровольный просмотр рекламы. Больше потолка
+     * цены (`maxIncomeSeconds`) — иначе реклама стала бы выгоднее игры.
+     */
+    rewardedCooldownMs: number
   }
   /** Офлайн-доход: сколько часов отсутствия начисляется. */
   offline: { maxSeconds: number }
@@ -63,11 +68,12 @@ export const balance: BalanceConfig = {
   click: { baseCost: 25, costGrowth: 1.7, powerGain: 1 },
   sunwell: { baseCost: 150, costGrowth: 1.75, productionGain: 2 },
   egg: {
-    baseCost: 300,
-    costGrowth: 1.16,
-    softCapAfter: 40,
+    baseCost: 450,
+    costGrowth: 1.2,
+    softCapAfter: 25,
     softCapGrowth: 1.07,
-    maxIncomeSeconds: 30 * 60,
+    maxIncomeSeconds: 12 * 60,
+    rewardedCooldownMs: 20 * 60_000,
   },
   // 4 часа вместо 8: офлайн помогает, но не заменяет игру.
   offline: { maxSeconds: 4 * 60 * 60 },

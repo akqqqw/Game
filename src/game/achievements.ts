@@ -21,6 +21,7 @@ export type AchievementDefinition = {
   kind: AchievementKind
   target: number
   rewardStars: number
+  /** Яйца — только за крупные вехи: мелочи поощряются звёздами. */
   rewardEggs: number
 }
 
@@ -53,7 +54,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'eggs',
     target: 1,
     rewardStars: 10,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'egg-collector',
@@ -62,7 +63,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'eggs',
     target: 5,
     rewardStars: 25,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'first-upgrade',
@@ -80,7 +81,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'upgrades',
     target: 10,
     rewardStars: 35,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'three-species',
@@ -89,7 +90,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'collection',
     target: 3,
     rewardStars: 20,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'full-collection',
@@ -98,7 +99,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'collection',
     target: regularCreatures.length,
     rewardStars: 100,
-    rewardEggs: 3,
+    rewardEggs: 1,
   },
   {
     id: 'first-fusion',
@@ -107,7 +108,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'fusions',
     target: 1,
     rewardStars: 20,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'fusion-adept',
@@ -116,7 +117,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'fusions',
     target: 10,
     rewardStars: 45,
-    rewardEggs: 2,
+    rewardEggs: 1,
   },
   {
     id: 'first-mutation',
@@ -125,7 +126,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'mutations',
     target: 1,
     rewardStars: 30,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'habitat-builder',
@@ -134,7 +135,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'habitats',
     target: habitatDefinitions.length,
     rewardStars: 40,
-    rewardEggs: 1,
+    rewardEggs: 0,
   },
   {
     id: 'habitat-master',
@@ -143,7 +144,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'habitat_levels',
     target: maxHabitatLevels,
     rewardStars: 90,
-    rewardEggs: 2,
+    rewardEggs: 1,
   },
   {
     id: 'first-secret',
@@ -152,7 +153,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'secrets',
     target: 1,
     rewardStars: 60,
-    rewardEggs: 2,
+    rewardEggs: 1,
   },
   {
     id: 'all-secrets',
@@ -161,7 +162,7 @@ export const achievements: AchievementDefinition[] = [
     kind: 'secrets',
     target: secretCreatures.length,
     rewardStars: 150,
-    rewardEggs: 3,
+    rewardEggs: 1,
   },
 ]
 

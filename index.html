@@ -19,6 +19,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="format-detection" content="telephone=no" />
     <title>Острова Эволюции</title>
+    <!--
+      SDK Яндекс Игр. Платформа рекомендует для архива относительный путь
+      (`/sdk.js`): игра догружает его сама, если тег не отдался, — но при
+      обычном запуске скрипт начинает грузиться ещё до старта приложения и
+      успевает исполниться до `YaGames.init()`.
+    -->
+    <script src="./sdk.js" async></script>
   </head>
   <body>
     <div id="root"></div>

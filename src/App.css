@@ -377,10 +377,43 @@ h1 {
 }
 
 .offline-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin: 9px 0 0;
   color: #e8cb73;
   font-size: 11px;
   text-align: center;
+}
+
+/* Кнопка добровольной рекламы: заметная, но не спорящая с игровыми кнопками. */
+.ad-bonus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  color: #f4edcf;
+  font: 600 11px 'DM Sans', sans-serif;
+  background: rgba(232, 203, 115, 0.14);
+  border: 1px solid rgba(232, 203, 115, 0.45);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ad-bonus:hover:not(:disabled) {
+  background: rgba(232, 203, 115, 0.24);
+}
+
+.ad-bonus:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.4);
+  opacity: 0.6;
+}
+
+.ad-bonus-done {
+  color: #8eb3a7;
 }
 
 .daily-tasks {
@@ -578,6 +611,13 @@ h1 {
 
 .egg-action {
   background: #e4adcf;
+}
+
+/* Вторая строка карточки яйца: награда за просмотр рекламы. */
+.egg-card .egg-rewarded {
+  grid-column: 1 / -1;
+  justify-content: center;
+  width: 100%;
 }
 
 .hatch-result {

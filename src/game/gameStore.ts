@@ -78,6 +78,10 @@ type GameState = {
   /** Сообщение о результате слияния. */
   fusionNotice: string | null
   offlineEnergy: number
+  /** Уже забрал ли игрок удвоение офлайн-дохода за рекламу в этой сессии. */
+  offlineBonusClaimed: boolean
+  /** Когда снова будет доступно бесплатное яйцо за рекламу (0 — доступно). */
+  bonusEggReadyAt: number
   hydrated: boolean
   /** Уведомление о работе с облачным сохранением. */
   cloudNotice: string | null
@@ -99,6 +103,10 @@ type GameState = {
   /** Выселяет существо из жилища. */
   removeResident: (habitatId: HabitatId, creatureId: string) => boolean
   claimTask: (taskId: string) => boolean
+  /** Удваивает офлайн-доход за добровольный просмотр рекламы (один раз за сессию). */
+  grantOfflineBonus: () => boolean
+  /** Выдаёт бесплатное яйцо за рекламу с кулдауном из баланса. */
+  grantBonusEgg: () => boolean
   dismissAchievementNotice: () => void
   dismissFusionNotice: () => void
   dismissCloudNotice: () => void
@@ -172,6 +180,8 @@ export const useGameStore = create<GameState>((setBase, get) => {
     lastHatchedId: null,
     lastHatchedMutated: false,
     fusionNotice: null,
+    offlineBonusClaimed: false,
+    bonusEggReadyAt: 0,
     ...emptyHabitatState,
     stars: 0,
     eggInventory: 0,
@@ -432,6 +442,35 @@ export const useGameStore = create<GameState>((setBase, get) => {
       set({ achievementNotice: null })
       void persistState(get())
     },
+    grantOfflineBonus: () => {
+      const state = get()
+      if (state.offlineBonusClaimed || state.offlineEnergy <= 0) return false
+
+      noteGameAction()
+      const nextState = {
+        energy: state.energy + state.offlineEnergy,
+        totalEnergyEarned: state.totalEnergyEarned + state.offlineEnergy,
+        offlineBonusClaimed: true,
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
+    grantBonusEgg: () => {
+      const state = get()
+      const now = Date.now()
+      if (now < state.bonusEggReadyAt) return false
+
+      const nextState = {
+        eggInventory: state.eggInventory + 1,
+        bonusEggReadyAt: now + balance.egg.rewardedCooldownMs,
+      }
+      const finalState = { ...nextState, ...applyAchievementRewards({ ...state, ...nextState }) }
+      set(finalState)
+      void persistState({ ...state, ...finalState })
+      return true
+    },
     dismissFusionNotice: () => {
       set({ fusionNotice: null })
       void persistState(get())
@@ -637,6 +676,7 @@ function applyPersistedSave(
     dailyTasks,
     dailyTaskDate: today,
     offlineEnergy,
+    offlineBonusClaimed: false,
     hydrated: true,
   }
 }
