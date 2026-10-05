@@ -224,7 +224,8 @@ export function buildModelRecipe(input: {
  * Существа, для которых уже есть готовая модель из Blender.
  * Файлы лежат в `public/models/creatures/<id>.glb`; добавить новую модель —
  * положить файл и дописать id в этот список (см. `docs/creature-models.md`).
- * Пусто — значит все существа пока рисуются процедурно.
+ * Соответствие списка и файлов проверяет тест: если модели нет на месте,
+ * игра молча нарисует процедурную, но лучше узнать об этом сразу.
  */
 export const creatureModelFiles: readonly string[] = [
   'mossling',
@@ -242,9 +243,6 @@ export const creatureModelFiles: readonly string[] = [
   'mosswarden',
   'tidelotus',
   'frostfin',
-  '',
-  '',
-  '',
 ]
 
 /** Есть ли для существа готовая модель-файл. */
