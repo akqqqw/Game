@@ -5,8 +5,9 @@
  *  1. Инициализация никогда не блокирует запуск игры. Если SDK недоступен
  *     (локальная разработка, нет сети, скрипт не отдался) — игра продолжает
  *     работать в локальном режиме, все вызовы SDK становятся безопасными заглушками.
- *  2. Скрипт подключается динамически по относительному пути `/sdk.js` —
- *     это рекомендованный платформой способ (`base` сборки не влияет на путь).
+ *  2. Скрипт подключается относительным путём `sdk.js`: тег есть в `index.html`
+ *     (рекомендация платформы для архива на сервере Яндекса), а если он не
+ *     загрузился — игра догружает файл сама, пробуя путь от корня (`/sdk.js`).
  *  3. `LoadingAPI.ready()` вызывается ровно один раз и только после того, как
  *     игрок реально может играть (см. `notifyGameReady`).
  *  4. `GameplayAPI.start()/stop()` синхронизированы с единым состоянием паузы.
@@ -20,9 +21,20 @@ import { SDK_PAUSE_EVENT, SDK_RESUME_EVENT, type YandexPlayer, type YandexSdk } 
 const SDK_SCRIPT_ID = 'yandex-games-sdk'
 /** Относительный путь: работает и в архиве на сервере Яндекса, и локально. */
 const SDK_SCRIPT_URL = `${import.meta.env.BASE_URL}sdk.js`
+/**
+ * Запасной путь — от корня хостинга: именно его советует документация для
+ * архива на сервере Яндекса. Если основной путь недоступен (нестандартный
+ * хостинг, скрипт из `index.html` не отдался), пробуем этот.
+ */
+const SDK_SCRIPT_FALLBACK_URL = '/sdk.js'
 
 /** Сколько ждём загрузку самого скрипта `/sdk.js`. */
 const SCRIPT_LOAD_TIMEOUT_MS = 8000
+/**
+ * Сколько ждём SDK, если тег уже стоял в документе до запуска приложения:
+ * события загрузки могли пройти раньше, поэтому срок короче.
+ */
+const EXISTING_SCRIPT_TIMEOUT_MS = 3000
 /** Сколько ждём появление глобального объекта `YaGames` после загрузки скрипта. */
 const GLOBAL_WAIT_TIMEOUT_MS = 5000
 /** Сколько ждём `YaGames.init()` (метод может обращаться к серверу платформы). */
@@ -100,49 +112,67 @@ function describeError(error: unknown): string {
   return String(error)
 }
 
-function createScriptElement(): { script: HTMLScriptElement; isNew: boolean } {
-  const existing = document.getElementById(SDK_SCRIPT_ID)
-  if (existing instanceof HTMLScriptElement) return { script: existing, isNew: false }
+function hasYaGames(): boolean {
+  return typeof window.YaGames?.init === 'function'
+}
 
+/** Абсолютный адрес скрипта: теги сравниваем по нему, а не по строке. */
+function absoluteScriptUrl(value: string): string {
+  try {
+    return new URL(value, document.baseURI).href
+  } catch {
+    return value
+  }
+}
+
+/**
+ * Уже подключённый тег с этим адресом (например, из `index.html`).
+ * Помеченные неудачными пропускаем: по тому же адресу можно попробовать снова.
+ */
+function findScript(url: string): HTMLScriptElement | null {
+  const target = absoluteScriptUrl(url)
+  for (const script of Array.from(document.scripts)) {
+    if (script instanceof HTMLScriptElement && script.dataset.sdkFailed !== '1'
+      && absoluteScriptUrl(script.src) === target) {
+      return script
+    }
+  }
+  return null
+}
+
+function createScriptElement(url: string): HTMLScriptElement {
   const script = document.createElement('script')
   script.id = SDK_SCRIPT_ID
-  script.src = SDK_SCRIPT_URL
+  script.src = url
   script.async = true
   document.head.append(script)
-  return { script, isNew: true }
+  return script
 }
 
-async function waitForGlobal(): Promise<void> {
-  const deadline = Date.now() + GLOBAL_WAIT_TIMEOUT_MS
+/** Ждём появления объекта `YaGames`: SDK исполняется после загрузки скрипта. */
+async function waitForGlobal(timeoutMs = GLOBAL_WAIT_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (typeof window.YaGames?.init === 'function') return
+    if (hasYaGames()) return
     await delay(50)
   }
-  throw new Error('Объект YaGames не появился после загрузки /sdk.js')
+  throw new Error('Объект YaGames не появился после загрузки sdk.js')
 }
 
-async function ensureSdkScript(): Promise<void> {
-  if (typeof window.YaGames?.init === 'function') return
-
-  const { script, isNew } = createScriptElement()
-  if (!isNew) {
-    // Тег уже был в документе — ждём только появления глобального объекта.
-    await waitForGlobal()
-    return
-  }
-
-  await new Promise<void>((resolve, reject) => {
+/** Ждём загрузку созданного тега: `load` — успех, `error` — сразу неудача. */
+function waitForScript(script: HTMLScriptElement, url: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const onLoad = () => {
       cleanup()
       resolve()
     }
     const onError = () => {
       cleanup()
-      reject(new Error(`Не удалось загрузить ${SDK_SCRIPT_URL}`))
+      reject(new Error(`Не удалось загрузить ${url}`))
     }
     const timer = window.setTimeout(() => {
       cleanup()
-      reject(new Error(`Скрипт ${SDK_SCRIPT_URL} не загрузился за ${SCRIPT_LOAD_TIMEOUT_MS} мс`))
+      reject(new Error(`Скрипт ${url} не загрузился за ${SCRIPT_LOAD_TIMEOUT_MS} мс`))
     }, SCRIPT_LOAD_TIMEOUT_MS)
     function cleanup() {
       window.clearTimeout(timer)
@@ -153,8 +183,87 @@ async function ensureSdkScript(): Promise<void> {
     script.addEventListener('load', onLoad)
     script.addEventListener('error', onError)
   })
+}
 
-  await waitForGlobal()
+/**
+ * Ждёт SDK, когда тег уже был в документе (так его ставит `index.html`).
+ *
+ * Про загрузку этого тега игра не знает: если события `load`/`error` уже
+ * прошли, остаётся только ждать объект `YaGames` с таймаутом. Неудачный тег
+ * помечается, чтобы запасной путь мог запросить файл заново.
+ */
+function waitForScriptEvent(script: HTMLScriptElement): Promise<'load' | 'error' | 'timeout'> {
+  return new Promise<'load' | 'error' | 'timeout'>((resolve) => {
+    const finish = (value: 'load' | 'error' | 'timeout'): void => {
+      cleanup()
+      resolve(value)
+    }
+    const onLoad = (): void => finish('load')
+    const onError = (): void => finish('error')
+    const timer = window.setTimeout(() => finish('timeout'), EXISTING_SCRIPT_TIMEOUT_MS)
+    function cleanup(): void {
+      window.clearTimeout(timer)
+      script.removeEventListener('load', onLoad)
+      script.removeEventListener('error', onError)
+    }
+
+    script.addEventListener('load', onLoad)
+    script.addEventListener('error', onError)
+  })
+}
+
+async function waitForExistingScript(script: HTMLScriptElement, url: string): Promise<void> {
+  if (hasYaGames()) return
+
+  const outcome = await waitForScriptEvent(script)
+  if (outcome === 'error') {
+    script.dataset.sdkFailed = '1'
+    throw new Error(`Не удалось загрузить ${url}`)
+  }
+
+  try {
+    // После успешной загрузки SDK устанавливает объект почти сразу.
+    await waitForGlobal(GLOBAL_WAIT_TIMEOUT_MS)
+  } catch (error) {
+    script.dataset.sdkFailed = '1'
+    throw error
+  }
+}
+
+/**
+ * Подключает `/sdk.js`.
+ *
+ * Сначала используется тег из `index.html` (или файл по относительному пути),
+ * а если он не отдался — тот же файл от корня хостинга. Скрипт обязательно
+ * должен исполниться до `YaGames.init()`.
+ */
+async function ensureSdkScript(): Promise<void> {
+  if (hasYaGames()) return
+
+  let lastError: unknown = null
+
+  for (const url of [SDK_SCRIPT_URL, SDK_SCRIPT_FALLBACK_URL]) {
+    let created: HTMLScriptElement | null = null
+    try {
+      const existing = findScript(url)
+      if (existing) {
+        await waitForExistingScript(existing, url)
+        return
+      }
+
+      created = createScriptElement(url)
+      await waitForScript(created, url)
+      await waitForGlobal()
+      return
+    } catch (error) {
+      lastError = error
+      // Неудачный тег не оставляем в документе, чтобы не мешать запасному пути.
+      created?.remove()
+      console.info(`[yandex] Не удалось подключить ${url}:`, describeError(error))
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Не удалось подключить sdk.js')
 }
 
 function safeIsAuthorized(player: YandexPlayer | null): boolean {

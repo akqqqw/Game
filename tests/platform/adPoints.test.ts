@@ -73,6 +73,37 @@ describe('реклама включается при запуске игры', (
     // показ при этом ограничен точками и пейсингом.
     expect(ads.isAdsEnabled()).toBe(true)
   })
+
+  it('частота показов задана пейсингом по умолчанию', async () => {
+    installFakeSdk({ authorized: true, withAds: true })
+    vi.resetModules()
+    const ads = await import('../../src/platform/ads')
+    const bootstrap = await import('../../src/platform/bootstrap')
+
+    bootstrap.bootstrapPlatform()
+
+    // Реклама идёт с частотой продакшена: не чаще раза в 90 секунд, не раньше
+    // 12 игровых действий и не в первые 45 секунд сессии.
+    expect(ads.getAdsConfig()).toMatchObject({
+      interstitialCooldownMs: 90_000,
+      interstitialMinActions: 12,
+      firstAdDelayMs: 45_000,
+    })
+  })
+
+  it('знает все точки показа, включая награды дня и закрытие уведомления', async () => {
+    const { adPoints } = await prepare()
+
+    expect(adPoints.getAdPointsState().points).toEqual([
+      'egg-hatched',
+      'fusion-done',
+      'upgrade-bought',
+      'habitat-upgraded',
+      'screen-change',
+      'task-claimed',
+      'notice-dismissed',
+    ])
+  })
 })
 
 describe('точка показа срабатывает в логической паузе', () => {
@@ -96,7 +127,15 @@ describe('точка показа срабатывает в логической
   })
 
   it('показывает рекламу после каждого типа точки', async () => {
-    const points = ['egg-hatched', 'fusion-done', 'upgrade-bought', 'habitat-upgraded', 'screen-change'] as const
+    const points = [
+      'egg-hatched',
+      'fusion-done',
+      'upgrade-bought',
+      'habitat-upgraded',
+      'screen-change',
+      'task-claimed',
+      'notice-dismissed',
+    ] as const
 
     for (const point of points) {
       const { sdk, ads, adPoints } = await prepare({ config: { interstitialCooldownMs: 0 } })

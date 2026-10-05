@@ -83,6 +83,47 @@ describe('реклама выключена (состояние по умолч�
   })
 })
 
+describe('пейсинг по умолчанию', () => {
+  it('задаёт продакшен-частоту: 90 секунд между показами и 12 действий игрока', async () => {
+    const { ads } = await loadModules()
+
+    expect(ads.getAdsConfig()).toMatchObject({
+      enabled: false,
+      interstitialCooldownMs: 90_000,
+      interstitialMinActions: 12,
+      firstAdDelayMs: 45_000,
+    })
+  })
+
+  it('не показывает рекламу в первые секунды сессии, даже когда действий много', async () => {
+    const { sdk, ads } = await prepareAds({ config: { firstAdDelayMs: 45_000 } })
+
+    ads.noteGameAction(200)
+    expect(ads.canShowInterstitial()).toBe(false)
+    expect(await ads.showInterstitial()).toBe('throttled')
+    expect(sdk.ads.fullscreenCalls).toBe(0)
+  })
+
+  it('включает показ, когда пройдены и задержка, и действия', async () => {
+    const { sdk, ads } = await prepareAds({
+      config: { firstAdDelayMs: 1_000, interstitialMinActions: 12, interstitialCooldownMs: 90_000 },
+    })
+
+    ads.noteGameAction(11)
+    expect(ads.canShowInterstitial()).toBe(false)
+
+    ads.noteGameAction(1)
+    // Задержка первого показа ещё не прошла — показ откладывается, а не отменяется.
+    expect(await ads.showInterstitial()).toBe('throttled')
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1_100))
+    const result = ads.showInterstitial()
+    await waitForAdStart(ads)
+    sdk.ads.closeFullscreen(true)
+    expect(await result).toBe('completed')
+  })
+})
+
 describe('вознаграждаемая реклама', () => {
   it('выдаёт награду только после подтверждённого показа', async () => {
     const { sdk, ads } = await prepareAds()

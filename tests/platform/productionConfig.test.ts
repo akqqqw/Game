@@ -70,6 +70,9 @@ describe('страница игры', () => {
     // при сборке (проверяется ниже на готовом dist).
     expect(indexHtml).toContain('src="/src/main.tsx"')
     expect(indexHtml).toContain('viewport-fit=cover')
+    // SDK подключён тегом: относительный путь работает и в архиве на сервере
+    // Яндекса, и локально (там его отдаёт мок Vite).
+    expect(indexHtml).toContain('src="./sdk.js"')
   })
 
   it('не тянет ресурсы со сторонних хостов (п. 1.7)', () => {
@@ -149,9 +152,16 @@ describe.skipIf(!distBuilt)('готовый dist', () => {
       ),
     ]
 
-    expect(referenced.length).toBeGreaterThan(0)
-    const missing = referenced.filter((asset) => !existsSync(join(distDir, asset)))
+    // `sdk.js` — файл платформы: его отдаёт сервер Яндекс Игр, в архиве его нет.
+    const localAssets = referenced.filter((asset) => !asset.endsWith('sdk.js'))
+    expect(localAssets.length).toBeGreaterThan(0)
+    const missing = localAssets.filter((asset) => !existsSync(join(distDir, asset)))
     expect(missing).toEqual([])
+  })
+
+  it('подключает sdk.js платформы относительным путём (п. 1.7)', () => {
+    const match = readDistIndex().match(/<script[^>]*src="([^"]*sdk\.js)"[^>]*>/)
+    expect(match?.[1]).toBe('./sdk.js')
   })
 
   it('не содержит исходников, карт сборки и служебных файлов', () => {

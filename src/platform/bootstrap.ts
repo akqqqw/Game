@@ -28,16 +28,17 @@ export function bootstrapPlatform(): void {
   initMobileFullscreen()
   // Звук: модуль сам останавливает звучание при паузе и рекламе (п. 1.3, 4.7).
   initAudio()
-  // Реклама включена: точки показа расставлены в логических паузах
-  // (см. `src/platform/adPoints.ts`). Отключается одной строкой:
-  // configureAds({ enabled: false }) — игра при этом не меняется.
+  // Реклама включена: точки показа расставлены в логических паузах, а частота
+  // задана пейсингом по умолчанию (см. `defaultConfig` в `ads.ts`).
+  // Отключается одной строкой: configureAds({ enabled: false }) — игра при этом
+  // не меняется.
   configureAds({ enabled: true })
 
   if (import.meta.env.DEV) {
     // Ускоренный пейсинг для проверки точек показа: ?adsFast=1
     // (в production не действует — только для ручной проверки в dev).
     if (new URLSearchParams(window.location.search).get('adsFast') === '1') {
-      configureAds({ firstAdDelayMs: 5_000, interstitialCooldownMs: 15_000, interstitialMinActions: 3 })
+      configureAds({ firstAdDelayMs: 3_000, interstitialCooldownMs: 10_000, interstitialMinActions: 2 })
       console.info('[ads] Ускоренный режим проверки: ?adsFast=1')
     }
     installAdsDebugHelper()

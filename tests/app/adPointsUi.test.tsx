@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installFakeSdk, makeSave } from '../helpers/fakeSdk'
+import { getTodayKey } from '../../src/game/dailyTasks'
 
 /**
  * Точки показа рекламы глазами игрока: полноэкранная реклама появляется после
@@ -64,11 +65,16 @@ async function renderGame(prepared: Prepared): Promise<void> {
   await waitFor(() => expect(prepared.store.useGameStore.getState().hydrated).toBe(true))
 }
 
-/** Кнопка внутри блока с указанным заголовком (карточка или панель). */
+/**
+ * Главная кнопка блока с указанным заголовком (карточка или панель).
+ * В карточках бывает и вторая кнопка — награда за рекламу, поэтому берём первую.
+ */
 function buttonInBlock(heading: string): HTMLButtonElement {
   const block = screen.getByRole('heading', { name: heading }).closest('article, section')
   if (!block) throw new Error(`не найден блок «${heading}»`)
-  return within(block).getByRole('button')
+  const [button] = within(block).getAllByRole('button')
+  if (!button) throw new Error(`в блоке «${heading}» нет кнопок`)
+  return button
 }
 
 beforeEach(() => {
@@ -131,6 +137,54 @@ describe('реклама после завершённого действия', 
     fireEvent.click(screen.getByRole('button', { name: /Существа/ }))
     await new Promise((resolve) => window.setTimeout(resolve, 40))
     expect(sdk.ads.fullscreenCalls).toBe(1)
+  })
+})
+
+describe('точки показа на экране острова', () => {
+  it('получение награды за задание дня показывает рекламу', async () => {
+    const prepared = await prepare({
+      energy: 100,
+      dailyTaskDate: getTodayKey(),
+      dailyTasks: [
+        {
+          id: 'today-open-eggs',
+          kind: 'open_eggs',
+          title: 'Открыть яиц',
+          target: 1,
+          progress: 1,
+          rewardStars: 18,
+          rewardEggs: 0,
+          claimed: false,
+        },
+      ],
+    })
+    const { sdk, adPoints } = prepared
+    await renderGame(prepared)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Забрать' }))
+
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
+    expect(adPoints.getAdPointsState().lastPoint).toBe('task-claimed')
+    sdk.ads.closeFullscreen(true)
+  })
+
+  it('закрытие уведомления о достижении показывает рекламу', async () => {
+    const prepared = await prepare({ energy: 1000, eggsOpened: 0 })
+    const { sdk, adPoints } = prepared
+    await renderGame(prepared)
+
+    // Первое яйцо открывает достижение — показ идёт после него.
+    fireEvent.click(buttonInBlock('Лунное яйцо'))
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(1))
+    sdk.ads.closeFullscreen(true)
+    await waitFor(() => expect(sdk.ads.pending()).toBe('none'))
+
+    // Игрок закрывает уведомление о награде — это логическая пауза.
+    fireEvent.click(screen.getByRole('button', { name: /Достижение:/ }))
+
+    await waitFor(() => expect(sdk.ads.fullscreenCalls).toBe(2))
+    expect(adPoints.getAdPointsState().lastPoint).toBe('notice-dismissed')
+    sdk.ads.closeFullscreen(true)
   })
 })
 

@@ -82,6 +82,31 @@ function installFakeSdk(options: { lang?: string; initError?: Error } = {}): Fak
   }
 }
 
+/**
+ * Эмулирует сценарий с запасным путём: первый динамически созданный тег падает
+ * с ошибкой, второй — успешно грузится и устанавливает `YaGames`.
+ */
+function loadSdkScriptOnSecondTry(fake: FakeSdk): void {
+  const appendNode = document.head.append.bind(document.head)
+  let created = 0
+  vi.spyOn(document.head, 'append').mockImplementation(((node: Node) => {
+    appendNode(node)
+    if (node instanceof HTMLScriptElement) {
+      created += 1
+      const isFirst = created === 1
+      queueMicrotask(() => {
+        if (isFirst) {
+          node.dispatchEvent(new Event('error'))
+          return
+        }
+        window.YaGames = fake.yaGames
+        node.dispatchEvent(new Event('load'))
+      })
+    }
+    return node
+  }) as typeof document.head.append)
+}
+
 /** Заставляет динамически созданный тег `<script>` сразу упасть с ошибкой. */
 function failScriptLoading(): void {
   vi.spyOn(document.head, 'append').mockImplementation(((node: Node) => {
@@ -178,6 +203,73 @@ describe('инициализация SDK Яндекс Игр', () => {
     await sdk.notifyGameReady()
 
     expect(fake.calls.ready).toBe(1)
+  })
+
+  it('использует тег из index.html и не создаёт второй', async () => {
+    const fake = installFakeSdk({ lang: 'ru' })
+    delete window.YaGames
+    const tag = document.createElement('script')
+    tag.src = './sdk.js'
+    document.head.append(tag)
+    // Платформа исполнила подключённый скрипт: объект SDK уже доступен.
+    window.YaGames = fake.yaGames
+
+    const { sdk } = await loadPlatform()
+    const session = await sdk.getSdkSession()
+
+    expect(session.status).toBe('ready')
+    expect(document.querySelectorAll('script[src$="sdk.js"]')).toHaveLength(1)
+  })
+
+  it('догружает sdk.js сам, если тег из index.html не сработал', async () => {
+    const fake = installFakeSdk({ lang: 'ru' })
+    delete window.YaGames
+    const tag = document.createElement('script')
+    tag.src = './sdk.js'
+    document.head.append(tag)
+
+    // Архив лежит в корне: запасной путь — тот же адрес, но это новый запрос.
+    const appendNode = document.head.append.bind(document.head)
+    vi.spyOn(document.head, 'append').mockImplementation(((node: Node) => {
+      appendNode(node)
+      if (node instanceof HTMLScriptElement) {
+        window.YaGames = fake.yaGames
+        queueMicrotask(() => node.dispatchEvent(new Event('load')))
+      }
+      return node
+    }) as typeof document.head.append)
+
+    const { sdk } = await loadPlatform()
+    const sessionPromise = sdk.getSdkSession()
+    // Файл по адресу тега не отдался: платформа сообщает об ошибке загрузки.
+    tag.dispatchEvent(new Event('error'))
+    const session = await sessionPromise
+
+    expect(session.status).toBe('ready')
+    const scripts = Array.from(document.querySelectorAll('script[id="yandex-games-sdk"]'))
+    expect(scripts).toHaveLength(1)
+    expect(scripts[0].getAttribute('src')).toBe('/sdk.js')
+    expect(tag.dataset.sdkFailed).toBe('1')
+  })
+
+  it('пробует запасной путь от корня, если относительный скрипт не загрузился', async () => {
+    // Игра живёт во вложенной папке: `./sdk.js` и `/sdk.js` — разные адреса.
+    const base = document.createElement('base')
+    base.href = 'http://localhost:3000/game/'
+    document.head.append(base)
+
+    const fake = installFakeSdk({ lang: 'ru' })
+    delete window.YaGames
+    loadSdkScriptOnSecondTry(fake)
+
+    const { sdk } = await loadPlatform()
+    const session = await sdk.getSdkSession()
+
+    expect(session.status).toBe('ready')
+    const scripts = Array.from(document.querySelectorAll('script[id="yandex-games-sdk"]'))
+    expect(scripts).toHaveLength(1)
+    // Первый, неудачный тег удалён из документа — остался только рабочий.
+    expect(scripts[0].getAttribute('src')).toBe('/sdk.js')
   })
 
   it('работает в локальном режиме, если скрипт SDK недоступен', async () => {

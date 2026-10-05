@@ -21,7 +21,9 @@ import {
 } from './game/habitats'
 import { startPassiveIncome, stopPassiveIncome } from './game/passiveIncome'
 import { requestAdPoint } from './platform/adPoints'
+import { canShowRewarded, isAdsAvailable, isAdsEnabled, showRewarded } from './platform/ads'
 import { isMuted, play, playVaried, toggleMuted, unlockAudio } from './platform/audio'
+import { useSdkSession } from './platform/useSdkSession'
 import { notifyGameReady } from './platform/yandexSdk'
 import { CreatureModel } from './ui/CreatureModel'
 import { LoadingScreen } from './ui/LoadingScreen'
@@ -37,6 +39,15 @@ const fusionErrors: Record<Extract<FusionOutcome, { ok: false }>['reason'], stri
 /** Целые числа показываем как есть, дробные — с одним знаком. */
 function formatNumber(value: number): string {
   return Math.abs(value % 1) < 0.05 ? Math.round(value).toLocaleString() : value.toFixed(1)
+}
+
+/** Остаток кулдауна награды за рекламу: минуты, при необходимости — часы. */
+function formatCooldown(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000))
+  if (minutes < 60) return `${minutes} мин`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest > 0 ? `${hours} ч ${rest} мин` : `${hours} ч`
 }
 
 function App() {
@@ -65,6 +76,10 @@ function App() {
   const claimTask = useGameStore((state) => state.claimTask)
   const dismissAchievementNotice = useGameStore((state) => state.dismissAchievementNotice)
   const offlineEnergy = useGameStore((state) => state.offlineEnergy)
+  const offlineBonusClaimed = useGameStore((state) => state.offlineBonusClaimed)
+  const grantOfflineBonus = useGameStore((state) => state.grantOfflineBonus)
+  const bonusEggReadyAt = useGameStore((state) => state.bonusEggReadyAt)
+  const grantBonusEgg = useGameStore((state) => state.grantBonusEgg)
   const hydrated = useGameStore((state) => state.hydrated)
   const hydrate = useGameStore((state) => state.hydrate)
 
@@ -147,6 +162,50 @@ function App() {
     }
     setScreen(next)
   }, [screen])
+  /** Награда за задание дня получена — завершённое действие, реклама уместна. */
+  const handleClaimTask = useCallback((taskId: string) => {
+    const claimed = claimTask(taskId)
+    if (claimed) requestAdPoint('task-claimed')
+    return claimed
+  }, [claimTask])
+  const handleDismissAchievementNotice = useCallback(() => {
+    // Уведомление закрывают уже после выдачи награды — это логическая пауза.
+    requestAdPoint('notice-dismissed')
+    dismissAchievementNotice()
+  }, [dismissAchievementNotice])
+
+  /**
+   * Вознаграждаемая реклама: показывается только по нажатию кнопки и только
+   * если платформа подтвердила показ (`'completed'`). Иначе награды нет.
+   */
+  const session = useSdkSession()
+  const rewardedAdsReady = isAdsEnabled() && isAdsAvailable() && session?.status === 'ready'
+
+  const handleOfflineBonusAd = useCallback(() => {
+    void showRewarded().then((outcome) => {
+      if (outcome === 'completed') {
+        // Пассивный доход начисляется сам; за просмотр игрок забирает его ещё раз.
+        grantOfflineBonus()
+      }
+    })
+  }, [grantOfflineBonus])
+  const handleBonusEggAd = useCallback(() => {
+    void showRewarded().then((outcome) => {
+      if (outcome === 'completed') grantBonusEgg()
+    })
+  }, [grantBonusEgg])
+
+  /**
+   * Кулдаун награды отсчитывается по часам, а не по рендерам: пока он активен,
+   * раз в 10 секунд обновляем время, чтобы кнопка сама разблокировалась.
+   */
+  const [clock, setClock] = useState(() => Date.now())
+  useEffect(() => {
+    if (bonusEggReadyAt <= 0) return
+    const timer = window.setInterval(() => setClock(Date.now()), 10_000)
+    return () => window.clearInterval(timer)
+  }, [bonusEggReadyAt])
+  const bonusEggCooldownLeftMs = bonusEggReadyAt > 0 ? Math.max(0, bonusEggReadyAt - clock) : 0
 
   // Достижение: звук фанфары в момент появления уведомления.
   useEffect(() => {
@@ -230,7 +289,7 @@ function App() {
 
       <div className="game-scroll">
       {achievementNotice && (
-        <button className="achievement-toast" type="button" onClick={dismissAchievementNotice}>
+        <button className="achievement-toast" type="button" onClick={handleDismissAchievementNotice}>
           <span>🏆</span>
           <strong>{achievementNotice}</strong>
           <small>Нажми, чтобы закрыть</small>
@@ -282,7 +341,21 @@ function App() {
           </section>
 
           {offlineEnergy > 0 && (
-            <p className="offline-note">Пока тебя не было, остров собрал {formatNumber(offlineEnergy)} энергии.</p>
+            <div className="offline-note">
+              <span>Пока тебя не было, остров собрал {formatNumber(offlineEnergy)} энергии.</span>
+              {/* Добровольная награда: показ только по нажатию, награда — по показу. */}
+              {rewardedAdsReady && !offlineBonusClaimed && (
+                <button
+                  className="ad-bonus"
+                  type="button"
+                  title="Награда за просмотр рекламы: офлайн-доход начислится ещё раз"
+                  onClick={handleOfflineBonusAd}
+                >
+                  ▶ Смотреть рекламу · ×2
+                </button>
+              )}
+              {offlineBonusClaimed && <span className="ad-bonus-done">Бонус ×2 получен</span>}
+            </div>
           )}
 
           <section className="systems-grid" aria-label="Системы острова">
@@ -318,6 +391,22 @@ function App() {
           >
             {eggInventory > 0 ? 'Бесплатно' : <>{eggCost.toLocaleString()} <span>✦</span></>}
           </button>
+          {/* Яйцо за рекламу: кнопка сама, показ — только по нажатию и с кулдауном. */}
+          {rewardedAdsReady && (
+            <button
+              className="ad-bonus egg-rewarded"
+              type="button"
+              disabled={!hydrated || bonusEggCooldownLeftMs > 0 || !canShowRewarded()}
+              title={bonusEggCooldownLeftMs > 0
+                ? `Следующее яйцо за рекламу — через ${formatCooldown(bonusEggCooldownLeftMs)}`
+                : 'Награда за просмотр рекламы: одно яйцо в запас'}
+              onClick={handleBonusEggAd}
+            >
+              {bonusEggCooldownLeftMs > 0
+                ? `▶ Яйцо через ${formatCooldown(bonusEggCooldownLeftMs)}`
+                : '▶ Смотреть рекламу · 🥚'}
+            </button>
+          )}
         </article>
           </section>
 
@@ -350,7 +439,7 @@ function App() {
             removeResident={removeResident}
           />
 
-          <DailyTasks tasks={dailyTasks} claimTask={claimTask} />
+          <DailyTasks tasks={dailyTasks} claimTask={handleClaimTask} />
         </>
       ) : screen === 'upgrades' ? (
         <UpgradeScreen
@@ -929,7 +1018,7 @@ function DailyTasks({ tasks, claimTask }: DailyTasksProps) {
           <p className="eyebrow">Обновляются каждый день</p>
           <h2>Задания дня</h2>
         </div>
-        <span className="daily-reset">Награды: ★ и яйца</span>
+        <span className="daily-reset">Награды: ★, за максимум — 🥚</span>
       </div>
       <div className="task-list">
         {tasks.map((task) => {

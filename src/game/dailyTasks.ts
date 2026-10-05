@@ -21,7 +21,12 @@ type TaskTemplate = {
   title: string
   targets: number[]
   rewardStars: number
-  rewardEggs: number
+  /**
+   * Награда яйцами за каждую сложность задания (индекс совпадает с `targets`).
+   * Яйцо даётся только за максимальную сложность: бесплатные яйца не должны
+   * обесценивать основную добычу (см. `balance.ts`).
+   */
+  rewardEggs: number[]
 }
 
 /** Сколько заданий выдаётся на день. */
@@ -33,35 +38,35 @@ const taskTemplates: TaskTemplate[] = [
     title: 'Заработать энергии',
     targets: [100, 250, 500],
     rewardStars: 12,
-    rewardEggs: 0,
+    rewardEggs: [0, 0, 0],
   },
   {
     kind: 'open_eggs',
     title: 'Открыть яиц',
     targets: [1, 2, 3],
     rewardStars: 18,
-    rewardEggs: 1,
+    rewardEggs: [0, 0, 1],
   },
   {
     kind: 'buy_upgrades',
     title: 'Купить улучшений',
     targets: [1, 2, 3],
     rewardStars: 15,
-    rewardEggs: 0,
+    rewardEggs: [0, 0, 0],
   },
   {
     kind: 'fuse',
     title: 'Провести слияний',
     targets: [1, 2, 3],
     rewardStars: 22,
-    rewardEggs: 1,
+    rewardEggs: [0, 0, 1],
   },
   {
     kind: 'build_habitats',
     title: 'Улучшить жилища',
     targets: [1, 2, 3],
     rewardStars: 16,
-    rewardEggs: 0,
+    rewardEggs: [0, 0, 0],
   },
 ]
 
@@ -72,16 +77,19 @@ const taskTemplates: TaskTemplate[] = [
 export function createDailyTasks(date: string): DailyTask[] {
   const shuffled = [...taskTemplates].sort(() => Math.random() - 0.5)
 
-  return shuffled.slice(0, tasksPerDay).map((template) => ({
-    id: `${date}-${template.kind}`,
-    kind: template.kind,
-    title: template.title,
-    target: template.targets[Math.floor(Math.random() * template.targets.length)],
-    progress: 0,
-    rewardStars: template.rewardStars,
-    rewardEggs: template.rewardEggs,
-    claimed: false,
-  }))
+  return shuffled.slice(0, tasksPerDay).map((template) => {
+    const difficulty = Math.floor(Math.random() * template.targets.length)
+    return {
+      id: `${date}-${template.kind}`,
+      kind: template.kind,
+      title: template.title,
+      target: template.targets[difficulty],
+      progress: 0,
+      rewardStars: template.rewardStars,
+      rewardEggs: template.rewardEggs[difficulty] ?? 0,
+      claimed: false,
+    }
+  })
 }
 
 export function getTodayKey(): string {
